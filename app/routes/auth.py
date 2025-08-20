@@ -116,7 +116,6 @@ def login():
             'name': f"{db_user.get('first_name','')} {db_user.get('last_name','')}".strip(),
             'course': db_user.get('course'),
             'student_number': db_user.get('student_number'),
-            'tor_verified': db_user.get('tor_verified', False),
         }
 
         current_app.logger.info('Login successful for %s (id=%s)', email, safe_user.get('id'))
@@ -133,7 +132,7 @@ def get_profile(current_user):
     try:
         supabase = get_supabase_client()
         res = supabase.table('users').select(
-            'id, email, first_name, last_name, course, student_number, tor_verified, created_at'
+            'id, email, first_name, last_name, course, student_number, created_at'
         ).eq('email', current_user).limit(1).execute()
         if not res.data:
             return jsonify({'message': 'User not found'}), 404
@@ -144,7 +143,6 @@ def get_profile(current_user):
             'name': f"{row.get('first_name','')} {row.get('last_name','')}".strip(),
             'course': row.get('course'),
             'student_number': row.get('student_number'),
-            'tor_verified': row.get('tor_verified', False),
             'created_at': row.get('created_at')
         }), 200
     except Exception as e:
@@ -164,7 +162,7 @@ def profile_by_email():
 
         supabase = get_supabase_client()
         res = supabase.table('users').select(
-            'id, email, first_name, last_name, course, student_number, tor_verified, created_at'
+            'id, email, first_name, last_name, course, student_number, created_at'
         ).eq('email', email).limit(1).execute()
         if not res.data:
             return jsonify({'message': 'User not found'}), 404
@@ -175,7 +173,6 @@ def profile_by_email():
             'name': f"{row.get('first_name','')} {row.get('last_name','')}".strip(),
             'course': row.get('course'),
             'student_number': row.get('student_number'),
-            'tor_verified': row.get('tor_verified', False),
             'created_at': row.get('created_at')
         }), 200
     except Exception as e:
