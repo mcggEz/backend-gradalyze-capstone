@@ -23,78 +23,54 @@ class AcademicAnalyzer:
             'data_science': ['data science', 'machine learning', 'artificial intelligence', 'analytics', 'database']
         }
         
-        self.learning_archetypes = {
-            'the_innocent': {
-                'traits': ['optimism', 'trust', 'simplicity', 'safety-seeking'],
-                'careers': ['Customer Service Representative', 'Teacher', 'Counselor', 'Healthcare Worker'],
-                'description': 'Values safety, simplicity, and optimism. Seeks to be good and do the right thing.',
-                'academic_indicators': ['consistent performance', 'follows rules', 'collaborative work', 'positive attitude']
+        self.riasec_archetypes = {
+            'realistic': {
+                'name': 'Applied Practitioner',
+                'traits': ['practical', 'hands-on', 'technical', 'systematic'],
+                'careers': ['Hardware Technician', 'Network Engineer', 'Systems Administrator', 'IT Support Specialist'],
+                'description': 'Practical and hands-on approach to technology. Excels in hardware, networking, and systems.',
+                'academic_indicators': ['hardware courses', 'networking', 'systems installation', 'applied technical labs', 'practical projects'],
+                'keywords': ['hardware', 'networking', 'systems', 'technical', 'installation', 'maintenance', 'infrastructure']
             },
-            'the_everyman': {
-                'traits': ['belonging', 'equality', 'realism', 'down-to-earth'],
-                'careers': ['Administrative Assistant', 'Sales Representative', 'Team Member', 'Support Specialist'],
-                'description': 'Seeks belonging and connection. Values equality and being part of a community.',
-                'academic_indicators': ['team projects', 'average performance', 'social subjects', 'practical courses']
+            'investigative': {
+                'name': 'Analytical Thinker',
+                'traits': ['analytical', 'logical', 'research-oriented', 'problem-solving'],
+                'careers': ['Data Scientist', 'AI/ML Engineer', 'Systems Analyst', 'Research Engineer', 'Software Architect'],
+                'description': 'Analytical and research-focused. Excels in mathematics, algorithms, and complex problem-solving.',
+                'academic_indicators': ['mathematics', 'algorithms', 'programming', 'data structures', 'machine learning', 'research projects', 'analytical thinking'],
+                'keywords': ['data science', 'machine learning', 'algorithms', 'research', 'analytics', 'mathematics', 'statistics']
             },
-            'the_hero': {
-                'traits': ['courage', 'mastery', 'overcoming challenges', 'determination'],
-                'careers': ['Entrepreneur', 'Military Officer', 'Emergency Responder', 'Athlete'],
-                'description': 'Driven by courage and mastery. Seeks to prove worth through courageous acts.',
-                'academic_indicators': ['overcoming difficult subjects', 'leadership roles', 'competitive spirit', 'high achievement']
+            'artistic': {
+                'name': 'Creative Innovator',
+                'traits': ['creative', 'innovative', 'artistic', 'expressive'],
+                'careers': ['UI/UX Designer', 'Game Developer', 'Digital Media Specialist', 'Creative Developer', 'Frontend Engineer'],
+                'description': 'Creative and innovative approach to technology. Excels in design, multimedia, and creative coding.',
+                'academic_indicators': ['UI/UX design', 'multimedia applications', 'creative coding', 'human-computer interaction', 'design principles', 'visual arts'],
+                'keywords': ['design', 'creative', 'ui/ux', 'multimedia', 'visual', 'artistic', 'innovation', 'frontend']
             },
-            'the_caregiver': {
-                'traits': ['compassion', 'service', 'selflessness', 'nurturing'],
-                'careers': ['Nurse', 'Social Worker', 'Teacher', 'Human Resources Manager'],
-                'description': 'Motivated by compassion and service. Seeks to help and protect others.',
-                'academic_indicators': ['helping others', 'service-oriented projects', 'healthcare subjects', 'communication skills']
+            'social': {
+                'name': 'Collaborative Supporter',
+                'traits': ['collaborative', 'supportive', 'communicative', 'helpful'],
+                'careers': ['IT Support Specialist', 'Systems Trainer', 'Academic Tutor', 'Community IT Facilitator', 'Technical Writer'],
+                'description': 'Collaborative and supportive approach. Excels in communication, training, and helping others.',
+                'academic_indicators': ['communication-intensive subjects', 'teamwork-driven projects', 'IT support', 'training modules', 'group work', 'presentation skills'],
+                'keywords': ['support', 'training', 'communication', 'collaboration', 'help', 'teaching', 'documentation']
             },
-            'the_explorer': {
-                'traits': ['freedom', 'discovery', 'self-fulfillment', 'adventure'],
-                'careers': ['Travel Writer', 'Researcher', 'Consultant', 'Freelancer'],
-                'description': 'Seeks freedom and discovery. Values exploration and new experiences.',
-                'academic_indicators': ['diverse course selection', 'independent study', 'research projects', 'creative thinking']
+            'enterprising': {
+                'name': 'Strategic Leader',
+                'traits': ['leadership', 'strategic', 'entrepreneurial', 'persuasive'],
+                'careers': ['IT Project Manager', 'Tech Entrepreneur', 'Product Manager', 'Team Lead', 'Business Analyst'],
+                'description': 'Strategic and leadership-oriented. Excels in project management, entrepreneurship, and business planning.',
+                'academic_indicators': ['project management', 'entrepreneurship subjects', 'software business planning', 'leadership tasks', 'business courses', 'management'],
+                'keywords': ['management', 'leadership', 'entrepreneurship', 'strategy', 'business', 'project management', 'product']
             },
-            'the_rebel': {
-                'traits': ['revolution', 'nonconformity', 'change', 'disruption'],
-                'careers': ['Innovation Consultant', 'Startup Founder', 'Activist', 'Creative Director'],
-                'description': 'Driven by revolution and change. Seeks to disrupt the status quo.',
-                'academic_indicators': ['challenging conventional methods', 'innovative projects', 'questioning authority', 'creative solutions']
-            },
-            'the_lover': {
-                'traits': ['passion', 'relationships', 'intimacy', 'connection'],
-                'careers': ['Marketing Specialist', 'Event Planner', 'Public Relations', 'Sales Manager'],
-                'description': 'Motivated by passion and relationships. Seeks connection and intimacy.',
-                'academic_indicators': ['group work', 'communication courses', 'relationship-building', 'emotional intelligence']
-            },
-            'the_creator': {
-                'traits': ['innovation', 'imagination', 'lasting value', 'artistic expression'],
-                'careers': ['Artist', 'Designer', 'Writer', 'Architect', 'Software Developer'],
-                'description': 'Driven by innovation and imagination. Seeks to create something of lasting value.',
-                'academic_indicators': ['creative projects', 'design courses', 'artistic expression', 'innovative thinking']
-            },
-            'the_jester': {
-                'traits': ['fun', 'joy', 'lightheartedness', 'entertainment'],
-                'careers': ['Entertainer', 'Comedian', 'Event Host', 'Content Creator', 'Teacher'],
-                'description': 'Seeks fun and joy. Values lightheartedness and bringing happiness to others.',
-                'academic_indicators': ['enjoyment in learning', 'humor in presentations', 'engaging others', 'positive atmosphere']
-            },
-            'the_sage': {
-                'traits': ['wisdom', 'knowledge', 'truth', 'understanding'],
-                'careers': ['Professor', 'Researcher', 'Analyst', 'Consultant', 'Data Scientist'],
-                'description': 'Driven by wisdom and knowledge. Seeks truth and understanding.',
-                'academic_indicators': ['excellent academic performance', 'research focus', 'analytical thinking', 'knowledge pursuit']
-            },
-            'the_magician': {
-                'traits': ['vision', 'transformation', 'possibility', 'influence'],
-                'careers': ['Life Coach', 'Therapist', 'Innovation Leader', 'Change Manager', 'Product Manager'],
-                'description': 'Seeks transformation and possibility. Has the vision to make things happen.',
-                'academic_indicators': ['transformative projects', 'visionary thinking', 'influencing others', 'change management']
-            },
-            'the_ruler': {
-                'traits': ['control', 'order', 'leadership', 'responsibility'],
-                'careers': ['CEO', 'Manager', 'Project Manager', 'Team Lead', 'Government Official'],
-                'description': 'Driven by control and order. Seeks leadership and responsibility.',
-                'academic_indicators': ['leadership roles', 'organizational skills', 'management courses', 'taking charge']
+            'conventional': {
+                'name': 'Methodical Organizer',
+                'traits': ['organized', 'methodical', 'systematic', 'detail-oriented'],
+                'careers': ['Database Administrator', 'Systems Auditor', 'QA Tester', 'Technical Writer', 'Compliance Specialist'],
+                'description': 'Methodical and organized approach. Excels in database management, documentation, and structured processes.',
+                'academic_indicators': ['database management', 'information systems', 'documentation', 'structured coding practices', 'quality assurance', 'compliance'],
+                'keywords': ['database', 'documentation', 'quality assurance', 'compliance', 'organization', 'systems', 'audit']
             }
         }
     
@@ -120,6 +96,7 @@ class AcademicAnalyzer:
         career_recommendations = self.generate_career_recommendations(learning_archetype, skills, subject_analysis)
         
         return {
+            'grades': grades_data,
             'academic_metrics': academic_metrics,
             'subject_analysis': subject_analysis,
             'learning_archetype': learning_archetype,
@@ -131,30 +108,106 @@ class AcademicAnalyzer:
     def extract_grades_and_subjects(self, text: str) -> List[Dict[str, Any]]:
         """Extract grades and subjects from transcript text"""
         subjects = []
+        seen_subjects = set()  # Track seen subjects to avoid duplicates
         
-        # Common grade patterns
-        grade_patterns = [
-            r'([A-Z][a-z\s]+(?:I{1,3}|IV|V)?)\s+(\d+(?:\.\d+)?)\s+([A-F][+-]?|\d+(?:\.\d+)?)',  # Subject Units Grade
-            r'([A-Z][a-z\s]+(?:I{1,3}|IV|V)?)\s+([A-F][+-]?|\d+(?:\.\d+)?)',  # Subject Grade
-        ]
+        # Split text into sections by semester headers
+        semester_sections = self.split_text_by_semesters(text)
         
-        for pattern in grade_patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            for match in matches:
-                if len(match) == 3:
-                    subject_name, units, grade = match
-                    subjects.append({
-                        'subject': subject_name.strip(),
-                        'units': self.parse_units(units),
-                        'grade': self.normalize_grade(grade)
-                    })
-                elif len(match) == 2:
-                    subject_name, grade = match
-                    subjects.append({
-                        'subject': subject_name.strip(),
-                        'units': 3,  # Default units
-                        'grade': self.normalize_grade(grade)
-                    })
+        for section_text, semester in semester_sections:
+            # Enhanced grade patterns for better extraction (prioritized)
+            grade_patterns = [
+                # Pattern 1: Course Code + Course Title + Units + Grade (TOR format) - HIGHEST PRIORITY
+                # e.g., "STS 0002 Science, Technology and Society 3 2.00"
+                # More specific pattern to avoid capturing wrong data
+                (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'course_code_title'),
+                # Pattern 2: Course Code + Course Title + Units + Grade (alternative spacing)
+                (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{1,2})', 'course_code_title'),
+                # Pattern 3: Course Code + Course Title + Units + Grade (without course code format)
+                (r'([A-Z]{2,4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'course_code_title'),
+            ]
+            
+            # Process patterns in order (most specific first)
+            for pattern, pattern_type in grade_patterns:
+                matches = re.findall(pattern, section_text, re.IGNORECASE)
+                for match in matches:
+                    if len(match) == 4:
+                        course_code, course_title, units, grade = match
+                        
+                        # Clean and validate the data
+                        course_code = course_code.strip()
+                        course_title = course_title.strip()
+                        
+                        # Skip invalid course codes (like "COURSE CODE COURSE TITLE UNITS GRADE STS")
+                        if len(course_code) > 10 or 'COURSE' in course_code.upper() or 'CODE' in course_code.upper():
+                            continue
+                        
+                        # Clean course title (fix OCR typos)
+                        course_title = self.clean_course_title(course_title)
+                        
+                        subject_key = f"{course_code}-{course_title}"
+                        
+                        # Skip if we've already seen this subject
+                        if subject_key in seen_subjects:
+                            continue
+                        
+                        # Validate units and grade
+                        units_num = self.parse_units(units)
+                        grade_num = self.normalize_grade(grade)
+                        
+                        if units_num > 10 or grade_num > 5.0 or grade_num < 0:
+                            continue
+                        
+                        seen_subjects.add(subject_key)
+                        subjects.append({
+                            'subject': f"{course_code} - {course_title}",
+                            'units': units_num,
+                            'grade': grade_num,
+                            'semester': semester,
+                            'category': 'General'
+                        })
+            
+            # Only use fallback patterns if we didn't find any course code patterns
+            if not any('course_code_title' in str(subject) for subject in subjects if subject.get('semester') == semester):
+                fallback_patterns = [
+                    # Pattern 3: Subject Units Grade (fallback for other formats)
+                    (r'([A-Z][a-zA-Z\s&]+(?:I{1,3}|IV|V)?)\s+(\d+(?:\.\d+)?)\s+([A-F][+-]?|\d+(?:\.\d+)?)', 'fallback'),
+                    # Pattern 4: Subject Grade (fallback)
+                    (r'([A-Z][a-zA-Z\s&]+(?:I{1,3}|IV|V)?)\s+([A-F][+-]?|\d+(?:\.\d+)?)', 'fallback'),
+                ]
+                
+                for pattern, pattern_type in fallback_patterns:
+                    matches = re.findall(pattern, section_text, re.IGNORECASE)
+                    for match in matches:
+                        if len(match) == 3:
+                            subject_name, units, grade = match
+                            subject_key = f"{subject_name.strip()}-{semester}"
+                            
+                            if subject_key in seen_subjects:
+                                continue
+                            
+                            seen_subjects.add(subject_key)
+                            subjects.append({
+                                'subject': subject_name.strip(),
+                                'units': self.parse_units(units),
+                                'grade': self.normalize_grade(grade),
+                                'semester': semester,
+                                'category': 'General'
+                            })
+                        elif len(match) == 2:
+                            subject_name, grade = match
+                            subject_key = f"{subject_name.strip()}-{semester}"
+                            
+                            if subject_key in seen_subjects:
+                                continue
+                            
+                            seen_subjects.add(subject_key)
+                            subjects.append({
+                                'subject': subject_name.strip(),
+                                'units': 3,  # Default units
+                                'grade': self.normalize_grade(grade),
+                                'semester': semester,
+                                'category': 'General'
+                            })
         
         # If no structured data found, create sample data for demonstration
         if not subjects:
@@ -162,19 +215,68 @@ class AcademicAnalyzer:
         
         return subjects
     
+    def split_text_by_semesters(self, text: str) -> List[Tuple[str, str]]:
+        """Split text into sections based on semester headers"""
+        sections = []
+        
+        # Pattern to match semester headers
+        semester_pattern = r'(First|Second|Third|Fourth)\s+(Year|Semester).*?(First|Second|Third|Fourth)?\s*(Year|Semester)?'
+        
+        # Find all semester headers
+        semester_matches = list(re.finditer(semester_pattern, text, re.IGNORECASE))
+        
+        if not semester_matches:
+            # If no semester headers found, treat entire text as one section
+            sections.append((text, 'N/A'))
+        else:
+            # Split text by semester headers
+            for i, match in enumerate(semester_matches):
+                semester_name = match.group(0).strip()
+                
+                if i == 0:
+                    # First section: from start to first semester header
+                    section_text = text[:match.start()]
+                else:
+                    # Middle sections: from previous header to current header
+                    prev_match = semester_matches[i-1]
+                    section_text = text[prev_match.end():match.start()]
+                
+                # Clean up the section text
+                section_text = section_text.strip()
+                if section_text:
+                    sections.append((section_text, semester_name))
+            
+            # Last section: from last header to end
+            if semester_matches:
+                last_match = semester_matches[-1]
+                last_section_text = text[last_match.end():].strip()
+                if last_section_text:
+                    sections.append((last_section_text, semester_matches[-1].group(0).strip()))
+        
+        return sections
+    
     def create_sample_academic_data(self) -> List[Dict[str, Any]]:
         """Create sample academic data for demonstration"""
         return [
-            {'subject': 'Data Structures and Algorithms', 'units': 3, 'grade': 1.5},
-            {'subject': 'Web Development', 'units': 3, 'grade': 1.25},
-            {'subject': 'Database Systems', 'units': 3, 'grade': 1.75},
-            {'subject': 'Software Engineering', 'units': 3, 'grade': 1.5},
-            {'subject': 'Mathematics', 'units': 3, 'grade': 2.0},
-            {'subject': 'Statistics', 'units': 3, 'grade': 1.75},
-            {'subject': 'Programming Fundamentals', 'units': 3, 'grade': 1.25},
-            {'subject': 'Computer Networks', 'units': 3, 'grade': 2.0},
-            {'subject': 'Human Computer Interaction', 'units': 3, 'grade': 1.5},
-            {'subject': 'Project Management', 'units': 3, 'grade': 1.75}
+            # First Year, First Semester
+            {'subject': 'STS 0002 - Science, Technology and Society', 'units': 3, 'grade': 2.0, 'semester': 'First Year, First Semester', 'category': 'General'},
+            {'subject': 'AAP 0007 - Art Appreciation', 'units': 3, 'grade': 1.75, 'semester': 'First Year, First Semester', 'category': 'General'},
+            {'subject': 'PCM 0006 - Purposive Communication', 'units': 3, 'grade': 2.25, 'semester': 'First Year, First Semester', 'category': 'General'},
+            {'subject': 'MMW 0001 - Mathematics in the Modern World', 'units': 3, 'grade': 2.5, 'semester': 'First Year, First Semester', 'category': 'General'},
+            {'subject': 'ICC 0101 - Introduction to Computing', 'units': 3, 'grade': 2.0, 'semester': 'First Year, First Semester', 'category': 'Major'},
+            {'subject': 'ICC 0102 - Fundamentals of Programming', 'units': 3, 'grade': 2.25, 'semester': 'First Year, First Semester', 'category': 'Major'},
+            
+            # First Year, Second Semester
+            {'subject': 'CET 0111 - Calculus 1', 'units': 3, 'grade': 2.5, 'semester': 'First Year, Second Semester', 'category': 'Major'},
+            {'subject': 'CET 0114 - General Chemistry', 'units': 4, 'grade': 2.75, 'semester': 'First Year, Second Semester', 'category': 'Major'},
+            {'subject': 'EIT 0121 - Intro to Human Computer Interaction', 'units': 3, 'grade': 2.0, 'semester': 'First Year, Second Semester', 'category': 'Major'},
+            {'subject': 'ICC 0103 - Intermediate Programming', 'units': 3, 'grade': 2.5, 'semester': 'First Year, Second Semester', 'category': 'Major'},
+            
+            # Second Year, First Semester
+            {'subject': 'CET 0121 - Calculus 2', 'units': 3, 'grade': 2.25, 'semester': 'Second Year, First Semester', 'category': 'Major'},
+            {'subject': 'CET 0225 - Physics for IT', 'units': 4, 'grade': 2.5, 'semester': 'Second Year, First Semester', 'category': 'Major'},
+            {'subject': 'TCW 0005 - The Contemporary World', 'units': 3, 'grade': 2.0, 'semester': 'Second Year, First Semester', 'category': 'General'},
+            {'subject': 'ICC 0104 - Data Structures and Algorithms', 'units': 3, 'grade': 2.25, 'semester': 'Second Year, First Semester', 'category': 'Major'}
         ]
     
     def parse_units(self, units_str: str) -> int:
@@ -204,7 +306,30 @@ class AcademicAnalyzer:
             # Ensure grade is in valid range
             return max(1.0, min(5.0, grade_num))
         except:
-            return 2.5  # Default grade
+            return 2.5  # Default
+    
+    def clean_course_title(self, title: str) -> str:
+        """Clean and fix common OCR errors in course titles"""
+        title = title.strip()
+        
+        # Fix common OCR typos
+        title_fixes = {
+            'rt Appreciation': 'Art Appreciation',
+            'undamentals of Programming': 'Fundamentals of Programming',
+            'oundation of Physical Activities': 'Foundation of Physical Activities',
+            'Interdisiplinaryong Pagbasa at Pagsulat': 'Interdisciplinary Pagbasa at Pagsulat',
+            'echnology and Society': 'Technology and Society'
+        }
+        
+        for typo, correct in title_fixes.items():
+            if typo in title:
+                title = title.replace(typo, correct)
+        
+        # Remove any remaining OCR artifacts
+        title = re.sub(r'\s+', ' ', title)  # Multiple spaces to single space
+        title = title.strip()
+        
+        return title
     
     def calculate_academic_metrics(self, grades_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate GPA and other academic metrics"""
@@ -292,21 +417,15 @@ class AcademicAnalyzer:
             return "Needs Improvement"
     
     def identify_learning_archetype(self, subject_analysis: Dict[str, Any], academic_metrics: Dict[str, Any]) -> Dict[str, Any]:
-        """Identify learning archetype based on academic performance using 12 Jungian archetypes with percentages"""
-        # Initialize scores for all 12 archetypes
+        """Identify learning archetype based on academic performance using RIASEC archetypes with percentages"""
+        # Initialize scores for all 6 RIASEC archetypes
         archetype_scores = {
-            'the_innocent': 0,
-            'the_everyman': 0,
-            'the_hero': 0,
-            'the_caregiver': 0,
-            'the_explorer': 0,
-            'the_rebel': 0,
-            'the_lover': 0,
-            'the_creator': 0,
-            'the_jester': 0,
-            'the_sage': 0,
-            'the_magician': 0,
-            'the_ruler': 0
+            'realistic': 0,
+            'investigative': 0,
+            'artistic': 0,
+            'social': 0,
+            'enterprising': 0,
+            'conventional': 0
         }
         
         gpa = academic_metrics.get('gpa', 3.0)
@@ -318,119 +437,71 @@ class AcademicAnalyzer:
         weak_categories = [cat for cat, data in subject_analysis.items() 
                           if data['average_grade'] > 3.0]
         
-        # Enhanced scoring system for all archetypes
+        # Enhanced scoring system for RIASEC archetypes
         
-        # The Sage - Excellent academic performance, analytical subjects
+        # Realistic (Applied Practitioner) - Practical, hands-on, technical
+        if 'engineering' in strong_categories:
+            archetype_scores['realistic'] += 3
+        if 'programming' in strong_categories:
+            archetype_scores['realistic'] += 2
+        if gpa <= 2.5:
+            archetype_scores['realistic'] += 2  # Practical approach
+        if total_subjects >= 6:
+            archetype_scores['realistic'] += 1  # Systematic approach
+        
+        # Investigative (Analytical Thinker) - Analytical, research-oriented
         if gpa <= 1.75:
-            archetype_scores['the_sage'] += 3
-        if gpa <= 2.0:
-            archetype_scores['the_sage'] += 2
+            archetype_scores['investigative'] += 3
         if 'mathematics' in strong_categories:
-            archetype_scores['the_sage'] += 2
+            archetype_scores['investigative'] += 3
         if 'data_science' in strong_categories:
-            archetype_scores['the_sage'] += 2
+            archetype_scores['investigative'] += 3
         if 'science' in strong_categories:
-            archetype_scores['the_sage'] += 1
-        
-        # The Hero - Overcoming challenges, high achievement
-        if gpa <= 2.0:
-            archetype_scores['the_hero'] += 2
-        if len(weak_categories) > 0 and gpa <= 2.5:
-            archetype_scores['the_hero'] += 3  # Overcoming challenges
+            archetype_scores['investigative'] += 2
         if 'programming' in strong_categories:
-            archetype_scores['the_hero'] += 1
-        if 'engineering' in strong_categories:
-            archetype_scores['the_hero'] += 1
+            archetype_scores['investigative'] += 2
         
-        # The Creator - Creative subjects, innovative thinking
+        # Artistic (Creative Innovator) - Creative, innovative, expressive
         if 'design' in strong_categories:
-            archetype_scores['the_creator'] += 3
+            archetype_scores['artistic'] += 3
         if 'communication' in strong_categories:
-            archetype_scores['the_creator'] += 2
-        if 'programming' in strong_categories:
-            archetype_scores['the_creator'] += 2
+            archetype_scores['artistic'] += 2
         if len(strong_categories) >= 3:
-            archetype_scores['the_creator'] += 1  # Diverse creative abilities
+            archetype_scores['artistic'] += 2  # Diverse creative abilities
+        if 'programming' in strong_categories:
+            archetype_scores['artistic'] += 1  # Creative coding
         
-        # The Ruler - Leadership, management, organizational skills
+        # Social (Collaborative Supporter) - Collaborative, supportive, communicative
+        if 'communication' in strong_categories:
+            archetype_scores['social'] += 3
         if 'business' in strong_categories:
-            archetype_scores['the_ruler'] += 3
+            archetype_scores['social'] += 2
+        if gpa <= 2.5:
+            archetype_scores['social'] += 2  # Good interpersonal skills
+        if total_subjects >= 5:
+            archetype_scores['social'] += 1  # Collaborative approach
+        
+        # Enterprising (Strategic Leader) - Leadership, strategic, entrepreneurial
+        if 'business' in strong_categories:
+            archetype_scores['enterprising'] += 3
         if gpa <= 2.0:
-            archetype_scores['the_ruler'] += 2
+            archetype_scores['enterprising'] += 2
         if total_subjects >= 8:
-            archetype_scores['the_ruler'] += 1  # Managing many subjects
+            archetype_scores['enterprising'] += 2  # Managing many subjects
         if len(strong_categories) >= 2:
-            archetype_scores['the_ruler'] += 1  # Leadership across domains
+            archetype_scores['enterprising'] += 2  # Leadership across domains
         
-        # The Explorer - Diverse course selection, research focus
-        if total_subjects >= 8:
-            archetype_scores['the_explorer'] += 3
-        if 'science' in strong_categories:
-            archetype_scores['the_explorer'] += 2
+        # Conventional (Methodical Organizer) - Organized, methodical, systematic
         if 'data_science' in strong_categories:
-            archetype_scores['the_explorer'] += 2
-        if len(strong_categories) >= 4:
-            archetype_scores['the_explorer'] += 2  # Very diverse interests
-        
-        # The Rebel - Challenging conventional methods, innovative projects
-        if len(strong_categories) >= 3:
-            archetype_scores['the_rebel'] += 2
-        if 'programming' in strong_categories:
-            archetype_scores['the_rebel'] += 2
-        if 'engineering' in strong_categories:
-            archetype_scores['the_rebel'] += 1
-        if len(weak_categories) > 0:
-            archetype_scores['the_rebel'] += 1  # Challenging conventional methods
-        
-        # The Lover - Communication, relationship-building
-        if 'communication' in strong_categories:
-            archetype_scores['the_lover'] += 3
-        if 'business' in strong_categories:
-            archetype_scores['the_lover'] += 1
-        if gpa <= 2.5:
-            archetype_scores['the_lover'] += 1  # Good interpersonal skills
-        
-        # The Magician - Transformative thinking, visionary projects
-        if 'engineering' in strong_categories:
-            archetype_scores['the_magician'] += 2
-        if 'programming' in strong_categories:
-            archetype_scores['the_magician'] += 2
-        if 'data_science' in strong_categories:
-            archetype_scores['the_magician'] += 2
+            archetype_scores['conventional'] += 2
         if gpa <= 2.0:
-            archetype_scores['the_magician'] += 1
-        
-        # The Caregiver - Service-oriented, helping others
-        if 'communication' in strong_categories:
-            archetype_scores['the_caregiver'] += 2
-        if gpa <= 2.5:
-            archetype_scores['the_caregiver'] += 1
-        if 'business' in strong_categories:
-            archetype_scores['the_caregiver'] += 1  # People management
-        
-        # The Innocent - Consistent, rule-following, positive attitude
-        if gpa <= 2.5:
-            archetype_scores['the_innocent'] += 2
+            archetype_scores['conventional'] += 2
+        if total_subjects >= 6:
+            archetype_scores['conventional'] += 2  # Systematic approach
         if len(weak_categories) == 0:
-            archetype_scores['the_innocent'] += 2  # Consistent performance
-        if total_subjects >= 5:
-            archetype_scores['the_innocent'] += 1  # Follows academic structure
-        
-        # The Everyman - Average performance, practical courses
-        if 2.0 <= gpa <= 3.0:
-            archetype_scores['the_everyman'] += 2
-        if total_subjects >= 5:
-            archetype_scores['the_everyman'] += 2
-        if len(strong_categories) >= 2:
-            archetype_scores['the_everyman'] += 1  # Practical across domains
-        
-        # The Jester - Enjoyment in learning, engaging others
-        if 'communication' in strong_categories:
-            archetype_scores['the_jester'] += 2
-        if gpa <= 2.5:
-            archetype_scores['the_jester'] += 1
-        if 'design' in strong_categories:
-            archetype_scores['the_jester'] += 1  # Creative expression
+            archetype_scores['conventional'] += 2  # Consistent performance
+        if 'mathematics' in strong_categories:
+            archetype_scores['conventional'] += 1
         
         # Calculate percentages for all archetypes
         total_score = sum(archetype_scores.values())
@@ -443,13 +514,13 @@ class AcademicAnalyzer:
         else:
             # If no scores, distribute evenly
             for archetype in archetype_scores:
-                archetype_percentages[archetype] = round(100 / 12, 1)
+                archetype_percentages[archetype] = round(100 / 6, 1)
         
         # Determine primary archetype
         primary_archetype = max(archetype_scores, key=archetype_scores.get)
         
         # Get archetype details
-        archetype_info = self.learning_archetypes[primary_archetype]
+        archetype_info = self.riasec_archetypes[primary_archetype]
         
         return {
             'primary_archetype': primary_archetype,
@@ -458,7 +529,7 @@ class AcademicAnalyzer:
             'traits': archetype_info['traits'],
             'description': archetype_info['description'],
             'academic_indicators': archetype_info['academic_indicators'],
-            'archetype_name': primary_archetype.replace('_', ' ').title()
+            'archetype_name': archetype_info['name']
         }
     
     def extract_skills_from_subjects(self, grades_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -526,7 +597,7 @@ class AcademicAnalyzer:
         
         # Get archetype-based careers
         primary_archetype = learning_archetype['primary_archetype']
-        base_careers = self.learning_archetypes[primary_archetype]['careers']
+        base_careers = self.riasec_archetypes[primary_archetype]['careers']
         
         # Enhanced career skill mapping for all archetype careers
         career_skill_mapping = {

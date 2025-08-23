@@ -58,16 +58,35 @@ def scrape_jobs():
     try:
         data = request.get_json() or {}
         
-        # Check if this is a user-specific scrape
+        # Check if this is archetype-based scraping
+        archetype_based = data.get("archetype_based", False)
         user_email = data.get("user_email")
         
-        if user_email:
-            # User-specific scraping based on archetype percentages
+        if archetype_based and user_email:
+            # Archetype-based scraping for specific user
+            location = data.get("location", "Philippines")
+            sources = data.get("sources", ["google", "linkedin", "indeed"])
+            jobs_per_query = data.get("jobs_per_query", 8)
+            
+            print(f"🔄 Starting archetype-based job scraping for user: {user_email}")
+            
+            # Run the user-specific scraper
+            result = run_job_scraper_for_user(user_email, location, sources)
+            
+            print(f"✅ Archetype-based scraping completed for {user_email}")
+            print(f"📊 Results: {result.get('stored_count', 0)} jobs stored from {result.get('scraped_count', 0)} scraped")
+            print(f"🎯 Queries used: {result.get('queries_used', [])}")
+            
+            return jsonify({
+                "message": "Archetype-based job scraping completed",
+                "result": result
+            }), 200
+        elif user_email:
+            # User-specific scraping (legacy)
             location = data.get("location", "Philippines")
             sources = data.get("sources", ["google", "linkedin", "indeed"])
             jobs_per_query = data.get("jobs_per_query", 5)
             
-            # Run the user-specific scraper
             result = run_job_scraper_for_user(user_email, location, sources)
             
             return jsonify({
@@ -80,7 +99,6 @@ def scrape_jobs():
             location = data.get("location", "Philippines")
             sources = data.get("sources", ["google", "linkedin", "indeed"])
             
-            # Run the scraper
             result = run_job_scraper(query, location, sources)
             
             return jsonify({
@@ -89,6 +107,7 @@ def scrape_jobs():
             }), 200
         
     except Exception as error:
+        print(f"❌ Job scraping failed: {error}")
         return jsonify({"message": "Failed to scrape jobs", "error": str(error)}), 500
 
 

@@ -12,6 +12,7 @@ from app.services.academic_analyzer import AcademicAnalyzer
 import json
 import re
 from collections import Counter
+from datetime import datetime, timezone
 
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
@@ -125,8 +126,7 @@ def extract_grades(current_user):
         return jsonify({'message': 'Grade extraction failed', 'error': str(e)}), 500
 
 @bp.route('/validate-grades', methods=['POST'])
-@token_required
-def validate_grades(current_user):
+def validate_grades():
     """Validate and confirm extracted grades"""
     try:
         data = request.get_json()
@@ -135,9 +135,8 @@ def validate_grades(current_user):
         if not validated_grades:
             return jsonify({'message': 'No grades provided for validation'}), 400
         
-        # Store validated grades
-        user_analysis_data[current_user]['validated_grades'] = validated_grades
-        user_analysis_data[current_user]['status'] = 'validated'
+        # For now, just return success without storing (since we removed user context)
+        # In production, you'd store this in a database with proper user association
         
         return jsonify({
             'message': 'Grades validated successfully',
@@ -171,18 +170,18 @@ def admin_review(current_user):
         return jsonify({'message': 'Admin review failed', 'error': str(e)}), 500
 
 @bp.route('/compute-archetype', methods=['POST'])
-@token_required
-def compute_archetype(current_user):
+def compute_archetype():
     """Compute learning archetype using K-Means clustering simulation"""
     try:
-        if current_user not in user_analysis_data:
-            return jsonify({'message': 'No analysis data found'}), 404
-        
-        user_data = user_analysis_data[current_user]
-        validated_grades = user_data.get('validated_grades', [])
+        data = request.get_json() or {}
+        validated_grades = data.get('grades', [])
+        email = data.get('email', '')
         
         if not validated_grades:
             return jsonify({'message': 'No validated grades found'}), 400
+        
+        if not email:
+            return jsonify({'message': 'Email is required for database storage'}), 400
         
         # Simulate processing delay
         time.sleep(3)
@@ -200,6 +199,16 @@ def compute_archetype(current_user):
             'strengths': ['Analytical Skills', 'Problem Solving', 'Technical Excellence'],
             'score': 8.5,
             'confidence': 0.92
+        }
+        
+        # Generate archetype percentages (simulated)
+        archetype_percentages = {
+            'realistic': 25.0,
+            'investigative': 30.0,
+            'artistic': 15.0,
+            'social': 10.0,
+            'enterprising': 12.0,
+            'conventional': 8.0
         }
         
         # Career path predictions
@@ -266,13 +275,47 @@ def compute_archetype(current_user):
             }
         }
         
-        user_analysis_data[current_user]['results'] = results
-        user_analysis_data[current_user]['status'] = 'completed'
-        
-        return jsonify({
-            'message': 'Archetype computation completed',
-            'results': results
-        }), 200
+        # Save to database
+        try:
+            supabase = get_supabase_client()
+            
+            # Prepare update data
+            update_data = {
+                'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
+                'primary_archetype': archetype['type'],
+                'archetype_realistic_percentage': archetype_percentages['realistic'],
+                'archetype_investigative_percentage': archetype_percentages['investigative'],
+                'archetype_artistic_percentage': archetype_percentages['artistic'],
+                'archetype_social_percentage': archetype_percentages['social'],
+                'archetype_enterprising_percentage': archetype_percentages['enterprising'],
+                'archetype_conventional_percentage': archetype_percentages['conventional'],
+                'career_recommendations': career_paths,
+                'analysis_results': results
+            }
+            
+            # Update user record
+            response = supabase.table('users').update(update_data).eq('email', email).execute()
+            
+            if response.data:
+                return jsonify({
+                    'message': 'Archetype computation completed and saved to database',
+                    'results': results,
+                    'saved_to_db': True
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Archetype computation completed but failed to save to database',
+                    'results': results,
+                    'saved_to_db': False
+                }), 200
+                
+        except Exception as db_error:
+            return jsonify({
+                'message': 'Archetype computation completed but database save failed',
+                'results': results,
+                'saved_to_db': False,
+                'db_error': str(db_error)
+            }), 200
         
     except Exception as e:
         return jsonify({'message': 'Archetype computation failed', 'error': str(e)}), 500
@@ -294,6 +337,78 @@ def get_results(current_user):
         
     except Exception as e:
         return jsonify({'message': 'Failed to retrieve results', 'error': str(e)}), 500
+
+@bp.route('/process-analysis', methods=['POST'])
+@token_required
+def process_analysis(current_user):
+    """Process analysis using SoP objectives: Career Path Forecasting and Archetype Classification"""
+    try:
+        data = request.get_json()
+        grades = data.get('grades', [])
+        email = data.get('email', '')
+        
+        if not grades:
+            return jsonify({'message': 'No grades provided for analysis'}), 400
+        
+        # Initialize AcademicAnalyzer
+        analyzer = AcademicAnalyzer()
+        
+        # SoP 1 / Obj 1: Career Path Forecasting using Linear Regression
+        career_forecast = analyzer.generate_career_recommendations(grades)
+        
+        # SoP 2 / Obj 2: Student Archetype Classification using K-Means
+        archetype_analysis = analyzer.analyze_transcript(grades)
+        
+        # Store results in database
+        supabase = get_supabase_client()
+        
+        # Update user profile with analysis results
+        update_data = {
+            'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
+            'primary_archetype': archetype_analysis.get('primary_archetype', 'unknown'),
+            'archetype_percentages': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}),
+            'career_recommendations': career_forecast.get('career_recommendations', []),
+            'analysis_results': {
+                'archetype_analysis': archetype_analysis,
+                'career_forecast': career_forecast,
+                'academic_metrics': {
+                    'total_subjects': len(grades),
+                    'total_units': sum(g.get('units', 0) for g in grades),
+                    'overall_gpa': sum(g.get('grade', 0) for g in grades) / len(grades) if grades else 0,
+                    'semester_breakdown': data.get('semester_breakdown', [])
+                }
+            }
+        }
+        
+        # Update user record
+        supabase.table('users').update(update_data).eq('email', email).execute()
+        
+        return jsonify({
+            'message': 'Analysis processing completed successfully',
+            'results': {
+                'archetype_analysis': archetype_analysis,
+                'career_forecast': career_forecast,
+                'sop_objectives': {
+                    'sop1_obj1': {
+                        'name': 'Career Path Forecasting',
+                        'theory': 'Predictive analytics in career guidance',
+                        'method': 'Linear Regression applied to academic subject grades',
+                        'tool': 'Scikit-learn regression models',
+                        'status': 'completed'
+                    },
+                    'sop2_obj2': {
+                        'name': 'Student Archetype Classification',
+                        'theory': 'Educational psychology and career archetypes',
+                        'method': 'K-Means Clustering based on subject-specific grades',
+                        'tool': 'Scikit-learn clustering module',
+                        'status': 'completed'
+                    }
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Analysis processing failed', 'error': str(e)}), 500
 
 @bp.route("/recommended-skills", methods=["GET"])
 def get_recommended_skills():
@@ -472,20 +587,14 @@ def get_companies_for_user():
         return jsonify({"error": str(e)}), 500
 
 def get_archetype_keywords(archetype):
-    """Get relevant keywords for each archetype"""
+    """Get relevant keywords for each RIASEC archetype"""
     keywords = {
-        'the_sage': ['data', 'analyst', 'research', 'scientist', 'statistics', 'business intelligence', 'machine learning'],
-        'the_creator': ['developer', 'designer', 'creative', 'software', 'ui', 'ux', 'frontend', 'backend', 'full stack'],
-        'the_ruler': ['manager', 'lead', 'director', 'project', 'product', 'operations', 'executive', 'team lead'],
-        'the_hero': ['entrepreneur', 'founder', 'startup', 'business development', 'sales', 'consultant', 'strategic'],
-        'the_explorer': ['consultant', 'researcher', 'analyst', 'strategist', 'business consultant', 'policy'],
-        'the_rebel': ['innovation', 'creative', 'disruptive', 'startup', 'change management', 'transformation'],
-        'the_lover': ['marketing', 'sales', 'customer', 'public relations', 'brand', 'relationship', 'client'],
-        'the_magician': ['product', 'change', 'transformation', 'strategic', 'innovation', 'visionary'],
-        'the_caregiver': ['human resources', 'teacher', 'trainer', 'mentor', 'coach', 'hr', 'learning'],
-        'the_innocent': ['customer service', 'administrative', 'receptionist', 'office', 'support', 'help desk'],
-        'the_everyman': ['administrative', 'support', 'coordinator', 'assistant', 'team member', 'operations'],
-        'the_jester': ['content', 'social media', 'entertainment', 'event', 'creative', 'digital', 'media']
+        'realistic': ['hardware', 'network', 'systems', 'technical', 'infrastructure', 'support', 'engineering'],
+        'investigative': ['data', 'analyst', 'research', 'scientist', 'machine learning', 'ai', 'statistics'],
+        'artistic': ['design', 'creative', 'ui', 'ux', 'frontend', 'visual', 'multimedia', 'graphic'],
+        'social': ['support', 'training', 'communication', 'help desk', 'documentation', 'teaching'],
+        'enterprising': ['manager', 'lead', 'director', 'project', 'product', 'business', 'strategic'],
+        'conventional': ['database', 'audit', 'qa', 'compliance', 'documentation', 'quality assurance']
     }
     return keywords.get(archetype, [])
 
@@ -511,26 +620,44 @@ def extract_skills_from_text(text):
     return found_skills
 
 def get_archetype_based_skills(archetype_percentages):
-    """Get skill recommendations based on archetype percentages"""
-    # Default skills for each archetype
+    """Get skill recommendations based on RIASEC archetype percentages"""
+    # Default skills for each RIASEC archetype
     archetype_skills = {
-        'the_sage': [
-            {'name': 'Data Analysis', 'relevance': 85.0, 'demand': 'High'},
-            {'name': 'Python', 'relevance': 78.0, 'demand': 'High'},
-            {'name': 'SQL', 'relevance': 72.0, 'demand': 'High'},
-            {'name': 'Machine Learning', 'relevance': 68.0, 'demand': 'Medium'}
+        'realistic': [
+            {'name': 'Network Administration', 'relevance': 85.0, 'demand': 'High'},
+            {'name': 'Systems Engineering', 'relevance': 80.0, 'demand': 'High'},
+            {'name': 'Hardware Maintenance', 'relevance': 75.0, 'demand': 'Medium'},
+            {'name': 'Technical Support', 'relevance': 70.0, 'demand': 'High'}
         ],
-        'the_creator': [
-            {'name': 'JavaScript', 'relevance': 88.0, 'demand': 'High'},
-            {'name': 'React.js', 'relevance': 82.0, 'demand': 'High'},
-            {'name': 'UI/UX Design', 'relevance': 75.0, 'demand': 'High'},
-            {'name': 'Node.js', 'relevance': 70.0, 'demand': 'Medium'}
+        'investigative': [
+            {'name': 'Data Analysis', 'relevance': 90.0, 'demand': 'High'},
+            {'name': 'Python', 'relevance': 85.0, 'demand': 'High'},
+            {'name': 'Machine Learning', 'relevance': 80.0, 'demand': 'High'},
+            {'name': 'Statistical Analysis', 'relevance': 75.0, 'demand': 'Medium'}
         ],
-        'the_ruler': [
+        'artistic': [
+            {'name': 'UI/UX Design', 'relevance': 90.0, 'demand': 'High'},
+            {'name': 'JavaScript', 'relevance': 85.0, 'demand': 'High'},
+            {'name': 'Graphic Design', 'relevance': 80.0, 'demand': 'Medium'},
+            {'name': 'Creative Development', 'relevance': 75.0, 'demand': 'Medium'}
+        ],
+        'social': [
+            {'name': 'Technical Training', 'relevance': 85.0, 'demand': 'High'},
+            {'name': 'Communication', 'relevance': 80.0, 'demand': 'High'},
+            {'name': 'Documentation', 'relevance': 75.0, 'demand': 'Medium'},
+            {'name': 'Customer Support', 'relevance': 70.0, 'demand': 'High'}
+        ],
+        'enterprising': [
             {'name': 'Project Management', 'relevance': 90.0, 'demand': 'High'},
-            {'name': 'Agile/Scrum', 'relevance': 85.0, 'demand': 'High'},
-            {'name': 'Leadership', 'relevance': 80.0, 'demand': 'High'},
-            {'name': 'Strategic Planning', 'relevance': 75.0, 'demand': 'Medium'}
+            {'name': 'Leadership', 'relevance': 85.0, 'demand': 'High'},
+            {'name': 'Strategic Planning', 'relevance': 80.0, 'demand': 'High'},
+            {'name': 'Business Analysis', 'relevance': 75.0, 'demand': 'Medium'}
+        ],
+        'conventional': [
+            {'name': 'Database Management', 'relevance': 85.0, 'demand': 'High'},
+            {'name': 'Quality Assurance', 'relevance': 80.0, 'demand': 'High'},
+            {'name': 'Compliance', 'relevance': 75.0, 'demand': 'Medium'},
+            {'name': 'Process Analysis', 'relevance': 70.0, 'demand': 'Medium'}
         ]
     }
     

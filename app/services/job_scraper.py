@@ -12,94 +12,81 @@ class JobScraper:
         self.firecrawl = Firecrawl(api_key=os.getenv('FIRECRAWL_API_KEY'))
         self.supabase = get_supabase_client()
         
-        # Archetype to job query mapping
+        # RIASEC Archetype to job query mapping
         self.archetype_job_queries = {
-            'the_sage': [
-                'data scientist', 'research analyst', 'business analyst', 'statistical analyst',
-                'machine learning engineer', 'quantitative analyst', 'research scientist',
-                'professor', 'academic researcher', 'data analyst'
+            'realistic': [
+                'hardware technician', 'network engineer', 'systems administrator', 'it support specialist',
+                'technical support', 'infrastructure engineer', 'network administrator', 'system engineer',
+                'technical specialist', 'hardware engineer', 'network specialist'
             ],
-            'the_creator': [
-                'software developer', 'ui ux designer', 'graphic designer', 'web developer',
-                'creative director', 'art director', 'product designer', 'frontend developer',
-                'full stack developer', 'mobile app developer', 'game developer'
+            'investigative': [
+                'data scientist', 'machine learning engineer', 'research engineer', 'systems analyst',
+                'software architect', 'ai engineer', 'research scientist', 'data analyst',
+                'business intelligence analyst', 'quantitative analyst', 'research analyst'
             ],
-            'the_ruler': [
-                'project manager', 'team lead', 'manager', 'director', 'senior manager',
-                'program manager', 'product manager', 'operations manager', 'business manager',
-                'department head', 'executive'
+            'artistic': [
+                'ui ux designer', 'game developer', 'digital media specialist', 'creative developer',
+                'frontend engineer', 'graphic designer', 'web designer', 'creative director',
+                'visual designer', 'interaction designer', 'multimedia specialist'
             ],
-            'the_hero': [
-                'entrepreneur', 'startup founder', 'business owner', 'sales manager',
-                'business development', 'venture capitalist', 'consultant', 'strategic advisor',
-                'innovation manager', 'change agent'
+            'social': [
+                'it support specialist', 'systems trainer', 'academic tutor', 'technical writer',
+                'community it facilitator', 'training specialist', 'help desk specialist',
+                'customer support', 'technical trainer', 'documentation specialist'
             ],
-            'the_explorer': [
-                'consultant', 'researcher', 'analyst', 'strategist', 'business consultant',
-                'management consultant', 'research scientist', 'policy analyst', 'market researcher',
-                'business intelligence analyst'
+            'enterprising': [
+                'it project manager', 'tech entrepreneur', 'product manager', 'team lead',
+                'business analyst', 'program manager', 'senior manager', 'director',
+                'business development', 'strategic advisor', 'innovation manager'
             ],
-            'the_rebel': [
-                'innovation consultant', 'creative director', 'disruptive technology',
-                'startup founder', 'change management', 'transformation consultant',
-                'innovation manager', 'creative strategist', 'disruption specialist'
-            ],
-            'the_lover': [
-                'marketing specialist', 'sales manager', 'customer success', 'public relations',
-                'brand manager', 'marketing manager', 'sales representative', 'account manager',
-                'relationship manager', 'client success manager'
-            ],
-            'the_magician': [
-                'product manager', 'change manager', 'transformation manager', 'strategic advisor',
-                'innovation leader', 'visionary leader', 'transformation consultant',
-                'product strategist', 'change agent', 'strategic consultant'
-            ],
-            'the_caregiver': [
-                'human resources manager', 'teacher', 'trainer', 'mentor', 'coach',
-                'hr specialist', 'learning and development', 'talent manager',
-                'employee relations', 'wellness coordinator'
-            ],
-            'the_innocent': [
-                'customer service representative', 'administrative assistant', 'receptionist',
-                'office coordinator', 'customer support', 'client services', 'help desk',
-                'customer care', 'service coordinator'
-            ],
-            'the_everyman': [
-                'administrative assistant', 'support specialist', 'coordinator', 'assistant',
-                'team member', 'operations assistant', 'generalist', 'support coordinator',
-                'office assistant', 'team coordinator'
-            ],
-            'the_jester': [
-                'content creator', 'social media manager', 'entertainment', 'event planner',
-                'creative content', 'digital content', 'media specialist', 'entertainment manager',
-                'content strategist', 'social media specialist'
+            'conventional': [
+                'database administrator', 'systems auditor', 'qa tester', 'technical writer',
+                'compliance specialist', 'data analyst', 'quality assurance', 'systems analyst',
+                'business analyst', 'process analyst', 'documentation specialist'
             ]
         }
     
     def get_job_queries_from_archetype_percentages(self, archetype_percentages: Dict[str, float], 
-                                                  max_queries: int = 5) -> List[str]:
-        """Generate job queries based on user's archetype percentages"""
+                                                  max_queries: int = 8) -> List[str]:
+        """Generate job queries based on user's archetype percentages with weighted distribution"""
         queries = []
         
         # Sort archetypes by percentage (highest first)
         sorted_archetypes = sorted(archetype_percentages.items(), 
                                  key=lambda x: x[1], reverse=True)
         
-        # Take top archetypes and their job queries
-        for archetype, percentage in sorted_archetypes[:3]:  # Top 3 archetypes
-            if percentage > 10:  # Only consider archetypes with >10% match
+        # Calculate total percentage for normalization
+        total_percentage = sum(percentage for _, percentage in sorted_archetypes)
+        
+        if total_percentage == 0:
+            # Fallback to general queries if no archetype data
+            return ['entry level jobs', 'graduate jobs', 'fresh graduate', 'junior positions']
+        
+        # Distribute queries based on archetype percentages
+        for archetype, percentage in sorted_archetypes:
+            if percentage > 5:  # Only consider archetypes with >5% match
                 archetype_queries = self.archetype_job_queries.get(archetype, [])
-                # Take 1-2 queries per archetype based on percentage
-                num_queries = 2 if percentage > 25 else 1
-                queries.extend(archetype_queries[:num_queries])
+                
+                # Calculate how many queries this archetype should get
+                # Higher percentage = more queries
+                archetype_quota = max(1, int((percentage / total_percentage) * max_queries))
+                
+                # Take queries for this archetype
+                selected_queries = archetype_queries[:archetype_quota]
+                queries.extend(selected_queries)
+                
+                # Stop if we have enough queries
+                if len(queries) >= max_queries:
+                    break
         
         # If we don't have enough queries, add some general ones
-        if len(queries) < 3:
+        if len(queries) < max_queries:
             general_queries = [
                 'entry level jobs', 'graduate jobs', 'fresh graduate',
                 'junior positions', 'trainee positions', 'internship'
             ]
-            queries.extend(general_queries[:3 - len(queries)])
+            remaining_slots = max_queries - len(queries)
+            queries.extend(general_queries[:remaining_slots])
         
         return queries[:max_queries]
     

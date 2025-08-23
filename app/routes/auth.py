@@ -109,7 +109,16 @@ def login():
             current_app.logger.info('Login failed: password mismatch for %s', email)
             return jsonify({'message': 'Invalid credentials'}), 401
 
-        # Shape user payload without password_hash (JWT disabled for now)
+        # Generate JWT token
+        secret = current_app.config.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+        token_payload = {
+            'email': db_user.get('email'),
+            'user_id': db_user.get('id'),
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)  # 24 hour expiry
+        }
+        token = jwt.encode(token_payload, secret, algorithm='HS256')
+
+        # Shape user payload without password_hash
         safe_user = {
             'id': db_user.get('id'),
             'email': db_user.get('email'),
@@ -119,7 +128,11 @@ def login():
         }
 
         current_app.logger.info('Login successful for %s (id=%s)', email, safe_user.get('id'))
-        return jsonify({'message': 'Login successful', 'user': safe_user}), 200
+        return jsonify({
+            'message': 'Login successful', 
+            'user': safe_user,
+            'token': token
+        }), 200
 
     except Exception as e:
         current_app.logger.exception('Login error for %s: %s', request.json.get('email') if request.is_json else 'unknown', e)

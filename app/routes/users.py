@@ -187,14 +187,36 @@ def extract_grades_from_pdf():
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                 pages_text = [page.extract_text() or '' for page in pdf.pages]
             full_text = '\n'.join(pages_text)
-        except Exception:
+            current_app.logger.info(f'Extracted {len(full_text)} characters from PDF')
+            current_app.logger.info(f'First 500 characters: {full_text[:500]}')
+        except Exception as e:
             # If file download fails, use empty text (will generate sample data)
+            current_app.logger.error(f'PDF extraction failed: {e}')
             full_text = ""
 
         # Use the new Academic Analyzer for comprehensive analysis
         from app.services.academic_analyzer import AcademicAnalyzer
         analyzer = AcademicAnalyzer()
         academic_analysis = analyzer.analyze_transcript(full_text)
+        
+        # Debug logging
+        current_app.logger.info(f'Academic analysis result: {academic_analysis}')
+        current_app.logger.info(f'Grades extracted: {len(academic_analysis.get("grades", []))}')
+        if academic_analysis.get("grades"):
+            current_app.logger.info(f'First grade: {academic_analysis["grades"][0]}')
+            current_app.logger.info(f'All grades: {academic_analysis["grades"]}')
+            
+            # Log semester breakdown
+            semesters = {}
+            for grade in academic_analysis["grades"]:
+                semester = grade.get('semester', 'Unknown')
+                if semester not in semesters:
+                    semesters[semester] = []
+                semesters[semester].append(grade.get('subject', 'Unknown'))
+            
+            for semester, subjects in semesters.items():
+                current_app.logger.info(f'Semester {semester}: {len(subjects)} subjects')
+                current_app.logger.info(f'Subjects: {subjects}')
 
         # Store the comprehensive analysis in the user record
         import json
@@ -213,18 +235,12 @@ def extract_grades_from_pdf():
         
         # Add individual archetype percentages
         archetype_mapping = {
-            'the_innocent': 'archetype_innocent_percentage',
-            'the_everyman': 'archetype_everyman_percentage',
-            'the_hero': 'archetype_hero_percentage',
-            'the_caregiver': 'archetype_caregiver_percentage',
-            'the_explorer': 'archetype_explorer_percentage',
-            'the_rebel': 'archetype_rebel_percentage',
-            'the_lover': 'archetype_lover_percentage',
-            'the_creator': 'archetype_creator_percentage',
-            'the_jester': 'archetype_jester_percentage',
-            'the_sage': 'archetype_sage_percentage',
-            'the_magician': 'archetype_magician_percentage',
-            'the_ruler': 'archetype_ruler_percentage'
+            'realistic': 'archetype_realistic_percentage',
+            'investigative': 'archetype_investigative_percentage',
+            'artistic': 'archetype_artistic_percentage',
+            'social': 'archetype_social_percentage',
+            'enterprising': 'archetype_enterprising_percentage',
+            'conventional': 'archetype_conventional_percentage'
         }
         
         for archetype_key, percentage in archetype_percentages.items():
@@ -237,7 +253,14 @@ def extract_grades_from_pdf():
         return jsonify({
             'message': 'Academic analysis complete',
             'analysis': academic_analysis,
-            'extracted_text_length': len(full_text)
+            'text': full_text,
+            'grades': academic_analysis.get('grades', []),
+            'extracted_text_length': len(full_text),
+            'debug_info': {
+                'text_preview': full_text[:200] + '...' if len(full_text) > 200 else full_text,
+                'grades_count': len(academic_analysis.get('grades', [])),
+                'has_grades': bool(academic_analysis.get('grades'))
+            }
         }), 200
         
     except Exception as error:
