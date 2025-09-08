@@ -148,7 +148,7 @@ class JobScraper:
                     "salary_min": 40000 + (i * 10000),
                     "salary_max": 60000 + (i * 15000),
                     "currency": "PHP",
-                    "url": f"https://example.com/jobs/{query.replace(' ', '-')}-{i}-{timestamp}",
+                    "url": self._generate_realistic_job_url(title, query, i),
                     "source": "Google Jobs",
                     "posted_at": datetime.utcnow().isoformat(),
                     "scraped_at": datetime.utcnow().isoformat(),
@@ -218,11 +218,40 @@ class JobScraper:
                 "Content Strategist", "Creative Content Specialist", "Media Specialist"
             ]
         else:
-            # Generic titles
+            # Default job titles for general queries
             return [
-                f"Senior {query.title()}", f"Junior {query.title()}", f"Lead {query.title()}",
-                f"{query.title()} Specialist", f"Senior {query.title()} Manager"
+                "Junior Professional", "Entry Level Specialist", "Graduate Trainee", "Associate",
+                "Junior Analyst", "Entry Level Coordinator", "Graduate Position", "Junior Associate"
             ]
+    
+    def _generate_realistic_job_url(self, title: str, query: str, index: int) -> str:
+        """Generate LinkedIn job search URLs
+        
+        These URLs point to LinkedIn job search results for the Philippines.
+        LinkedIn job search URLs are more reliable and functional than other job sites.
+        """
+        # Create a clean search query for LinkedIn
+        search_query = f"{title}".replace(' ', '+')
+        
+        # LinkedIn job search URL with Philippines location and recent postings
+        linkedin_url = f"https://www.linkedin.com/jobs/search/?keywords={search_query}&location=Philippines&f_TPR=r86400&position=1&pageNum=0"
+        
+        return linkedin_url
+    
+    def _generate_specific_job_url(self, title: str, company: str, index: int) -> str:
+        """Generate URLs that look like specific job postings (for demonstration)"""
+        # These are example URLs that follow common job posting URL patterns
+        # In a real application, these would be actual job posting URLs from the database
+        
+        job_patterns = [
+            f"https://www.linkedin.com/jobs/view/{title.lower().replace(' ', '-')}-at-{company.lower().replace(' ', '-')}-{index}",
+            f"https://www.jobstreet.com.ph/en/job/{title.lower().replace(' ', '-')}-{company.lower().replace(' ', '-')}-{index}",
+            f"https://www.kalibrr.com/ph/job/{title.lower().replace(' ', '-')}-{company.lower().replace(' ', '-')}-{index}",
+            f"https://ph.indeed.com/viewjob?jk={title.lower().replace(' ', '')}{index}",
+            f"https://www.monster.com.ph/job/{title.lower().replace(' ', '-')}-{company.lower().replace(' ', '-')}-{index}"
+        ]
+        
+        return job_patterns[index % len(job_patterns)]
     
     def _generate_company_name(self, query: str) -> str:
         """Generate appropriate company names based on job type"""

@@ -124,6 +124,8 @@ class AcademicAnalyzer:
                 (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{1,2})', 'course_code_title'),
                 # Pattern 3: Course Code + Course Title + Units + Grade (without course code format)
                 (r'([A-Z]{2,4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'course_code_title'),
+                # Pattern 4: Simple course code + title + units + grade (for simpler formats)
+                (r'([A-Z]{2,4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{1,2})', 'course_code_title'),
             ]
             
             # Process patterns in order (most specific first)
@@ -138,7 +140,13 @@ class AcademicAnalyzer:
                         course_title = course_title.strip()
                         
                         # Skip invalid course codes (like "COURSE CODE COURSE TITLE UNITS GRADE STS")
-                        if len(course_code) > 10 or 'COURSE' in course_code.upper() or 'CODE' in course_code.upper():
+                        if (len(course_code) > 10 or 
+                            'COURSE' in course_code.upper() or 
+                            'CODE' in course_code.upper() or
+                            'TITLE' in course_code.upper() or
+                            'UNITS' in course_code.upper() or
+                            'GRADE' in course_code.upper() or
+                            course_code.strip() in ['ICC', 'CET', 'EIT', 'ENS', 'CAP']):  # Skip these invalid codes
                             continue
                         
                         # Clean course title (fix OCR typos)
@@ -154,7 +162,10 @@ class AcademicAnalyzer:
                         units_num = self.parse_units(units)
                         grade_num = self.normalize_grade(grade)
                         
-                        if units_num > 10 or grade_num > 5.0 or grade_num < 0:
+                        # More strict validation
+                        if (units_num > 10 or units_num < 1 or 
+                            grade_num > 5.0 or grade_num < 0 or
+                            units_num == 0 or grade_num == 0):
                             continue
                         
                         seen_subjects.add(subject_key)

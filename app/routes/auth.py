@@ -15,6 +15,8 @@ bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 # Sample users (in production, this would be from a database)
 USERS = {}
 
+# Flask-CORS handles OPTIONS responses automatically; no manual handler needed.
+
 def token_required(f):
     """Decorator to require JWT token for protected routes"""
     @wraps(f)
@@ -80,6 +82,11 @@ def register():
         return jsonify({'message': 'Registration successful', 'user': created}), 201
     except Exception as e:
         return jsonify({'message': 'Registration failed', 'error': str(e)}), 500
+
+@bp.route('/signup', methods=['POST'])
+def signup():
+    """Alias for register endpoint to maintain frontend compatibility."""
+    return register()
 
 @bp.route('/login', methods=['POST'])
 def login():
@@ -175,7 +182,12 @@ def profile_by_email():
 
         supabase = get_supabase_client()
         res = supabase.table('users').select(
-            'id, email, first_name, last_name, course, student_number, created_at'
+            'id, email, first_name, last_name, course, student_number, created_at, '
+            'primary_archetype, archetype_analyzed_at, '
+            'archetype_realistic_percentage, archetype_investigative_percentage, '
+            'archetype_artistic_percentage, archetype_social_percentage, '
+            'archetype_enterprising_percentage, archetype_conventional_percentage, '
+            'tor_url, tor_notes, tor_uploaded_at'
         ).eq('email', email).limit(1).execute()
         if not res.data:
             return jsonify({'message': 'User not found'}), 404
@@ -186,7 +198,18 @@ def profile_by_email():
             'name': f"{row.get('first_name','')} {row.get('last_name','')}".strip(),
             'course': row.get('course'),
             'student_number': row.get('student_number'),
-            'created_at': row.get('created_at')
+            'created_at': row.get('created_at'),
+            'primary_archetype': row.get('primary_archetype'),
+            'archetype_analyzed_at': row.get('archetype_analyzed_at'),
+            'archetype_realistic_percentage': row.get('archetype_realistic_percentage'),
+            'archetype_investigative_percentage': row.get('archetype_investigative_percentage'),
+            'archetype_artistic_percentage': row.get('archetype_artistic_percentage'),
+            'archetype_social_percentage': row.get('archetype_social_percentage'),
+            'archetype_enterprising_percentage': row.get('archetype_enterprising_percentage'),
+            'archetype_conventional_percentage': row.get('archetype_conventional_percentage'),
+            'tor_url': row.get('tor_url'),
+            'tor_notes': row.get('tor_notes'),
+            'tor_uploaded_at': row.get('tor_uploaded_at')
         }), 200
     except Exception as e:
         return jsonify({'message': 'Failed to fetch profile', 'error': str(e)}), 500

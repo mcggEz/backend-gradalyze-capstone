@@ -289,8 +289,7 @@ def compute_archetype():
                 'archetype_social_percentage': archetype_percentages['social'],
                 'archetype_enterprising_percentage': archetype_percentages['enterprising'],
                 'archetype_conventional_percentage': archetype_percentages['conventional'],
-                'career_recommendations': career_paths,
-                'analysis_results': results
+                'tor_notes': json.dumps(results)  # Store all results including career_paths in tor_notes
             }
             
             # Update user record
@@ -319,6 +318,66 @@ def compute_archetype():
         
     except Exception as e:
         return jsonify({'message': 'Archetype computation failed', 'error': str(e)}), 500
+
+@bp.route('/save-existing-results', methods=['POST'])
+def save_existing_results():
+    """Save existing analysis results to database"""
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '')
+        analysis_results = data.get('analysisResults', {})
+        
+        if not email:
+            return jsonify({'message': 'Email is required for database storage'}), 400
+        
+        if not analysis_results:
+            return jsonify({'message': 'No analysis results provided'}), 400
+        
+        # Extract archetype data from existing results
+        archetype = analysis_results.get('archetype', {})
+        archetype_percentages = analysis_results.get('learning_archetype', {}).get('archetype_percentages', {})
+        career_paths = analysis_results.get('career_paths', [])
+        
+        # Save to database
+        try:
+            supabase = get_supabase_client()
+            
+            # Prepare update data
+            update_data = {
+                'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
+                'primary_archetype': archetype.get('type', 'Unknown'),
+                'archetype_realistic_percentage': archetype_percentages.get('realistic', 0.0),
+                'archetype_investigative_percentage': archetype_percentages.get('investigative', 0.0),
+                'archetype_artistic_percentage': archetype_percentages.get('artistic', 0.0),
+                'archetype_social_percentage': archetype_percentages.get('social', 0.0),
+                'archetype_enterprising_percentage': archetype_percentages.get('enterprising', 0.0),
+                'archetype_conventional_percentage': archetype_percentages.get('conventional', 0.0),
+                'tor_notes': json.dumps(analysis_results)  # Store all results including career_paths in tor_notes
+            }
+            
+            # Update user record
+            response = supabase.table('users').update(update_data).eq('email', email).execute()
+            
+            if response.data:
+                return jsonify({
+                    'message': 'Analysis results saved to database successfully',
+                    'saved_to_db': True
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Failed to save analysis results to database',
+                    'saved_to_db': False
+                }), 200
+                
+        except Exception as db_error:
+            return jsonify({
+                'message': 'Database save failed',
+                'saved_to_db': False,
+                'db_error': str(db_error)
+            }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Failed to save results', 'error': str(e)}), 500
 
 @bp.route('/results', methods=['GET'])
 @token_required
@@ -366,9 +425,13 @@ def process_analysis(current_user):
         update_data = {
             'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
             'primary_archetype': archetype_analysis.get('primary_archetype', 'unknown'),
-            'archetype_percentages': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}),
-            'career_recommendations': career_forecast.get('career_recommendations', []),
-            'analysis_results': {
+            'archetype_realistic_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('realistic', 0.0),
+            'archetype_investigative_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('investigative', 0.0),
+            'archetype_artistic_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('artistic', 0.0),
+            'archetype_social_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('social', 0.0),
+            'archetype_enterprising_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('enterprising', 0.0),
+            'archetype_conventional_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('conventional', 0.0),
+            'tor_notes': json.dumps({
                 'archetype_analysis': archetype_analysis,
                 'career_forecast': career_forecast,
                 'academic_metrics': {
@@ -377,7 +440,7 @@ def process_analysis(current_user):
                     'overall_gpa': sum(g.get('grade', 0) for g in grades) / len(grades) if grades else 0,
                     'semester_breakdown': data.get('semester_breakdown', [])
                 }
-            }
+            })
         }
         
         # Update user record
@@ -422,11 +485,9 @@ def get_recommended_skills():
         
         # Get user's archetype data
         user_result = supabase.table("users").select(
-            "primary_archetype, archetype_innocent_percentage, archetype_everyman_percentage, "
-            "archetype_hero_percentage, archetype_caregiver_percentage, archetype_explorer_percentage, "
-            "archetype_rebel_percentage, archetype_lover_percentage, archetype_creator_percentage, "
-            "archetype_jester_percentage, archetype_sage_percentage, archetype_magician_percentage, "
-            "archetype_ruler_percentage, tor_notes"
+            "primary_archetype, archetype_realistic_percentage, archetype_investigative_percentage, "
+            "archetype_artistic_percentage, archetype_social_percentage, archetype_enterprising_percentage, "
+            "archetype_conventional_percentage, tor_notes"
         ).eq("email", email).execute()
         
         if not user_result.data:
@@ -436,18 +497,12 @@ def get_recommended_skills():
         
         # Get archetype percentages
         archetype_percentages = {
-            'the_innocent': user.get('archetype_innocent_percentage', 0.0),
-            'the_everyman': user.get('archetype_everyman_percentage', 0.0),
-            'the_hero': user.get('archetype_hero_percentage', 0.0),
-            'the_caregiver': user.get('archetype_caregiver_percentage', 0.0),
-            'the_explorer': user.get('archetype_explorer_percentage', 0.0),
-            'the_rebel': user.get('archetype_rebel_percentage', 0.0),
-            'the_lover': user.get('archetype_lover_percentage', 0.0),
-            'the_creator': user.get('archetype_creator_percentage', 0.0),
-            'the_jester': user.get('archetype_jester_percentage', 0.0),
-            'the_sage': user.get('archetype_sage_percentage', 0.0),
-            'the_magician': user.get('archetype_magician_percentage', 0.0),
-            'the_ruler': user.get('archetype_ruler_percentage', 0.0)
+            'realistic': user.get('archetype_realistic_percentage', 0.0),
+            'investigative': user.get('archetype_investigative_percentage', 0.0),
+            'artistic': user.get('archetype_artistic_percentage', 0.0),
+            'social': user.get('archetype_social_percentage', 0.0),
+            'enterprising': user.get('archetype_enterprising_percentage', 0.0),
+            'conventional': user.get('archetype_conventional_percentage', 0.0)
         }
         
         # Get relevant jobs based on archetype
@@ -512,11 +567,9 @@ def get_companies_for_user():
         
         # Get user's archetype data
         user_result = supabase.table("users").select(
-            "primary_archetype, archetype_innocent_percentage, archetype_everyman_percentage, "
-            "archetype_hero_percentage, archetype_caregiver_percentage, archetype_explorer_percentage, "
-            "archetype_rebel_percentage, archetype_lover_percentage, archetype_creator_percentage, "
-            "archetype_jester_percentage, archetype_sage_percentage, archetype_magician_percentage, "
-            "archetype_ruler_percentage"
+            "primary_archetype, archetype_realistic_percentage, archetype_investigative_percentage, "
+            "archetype_artistic_percentage, archetype_social_percentage, archetype_enterprising_percentage, "
+            "archetype_conventional_percentage"
         ).eq("email", email).execute()
         
         if not user_result.data:
@@ -526,18 +579,12 @@ def get_companies_for_user():
         
         # Get archetype percentages
         archetype_percentages = {
-            'the_innocent': user.get('archetype_innocent_percentage', 0.0),
-            'the_everyman': user.get('archetype_everyman_percentage', 0.0),
-            'the_hero': user.get('archetype_hero_percentage', 0.0),
-            'the_caregiver': user.get('archetype_caregiver_percentage', 0.0),
-            'the_explorer': user.get('archetype_explorer_percentage', 0.0),
-            'the_rebel': user.get('archetype_rebel_percentage', 0.0),
-            'the_lover': user.get('archetype_lover_percentage', 0.0),
-            'the_creator': user.get('archetype_creator_percentage', 0.0),
-            'the_jester': user.get('archetype_jester_percentage', 0.0),
-            'the_sage': user.get('archetype_sage_percentage', 0.0),
-            'the_magician': user.get('archetype_magician_percentage', 0.0),
-            'the_ruler': user.get('archetype_ruler_percentage', 0.0)
+            'realistic': user.get('archetype_realistic_percentage', 0.0),
+            'investigative': user.get('archetype_investigative_percentage', 0.0),
+            'artistic': user.get('archetype_artistic_percentage', 0.0),
+            'social': user.get('archetype_social_percentage', 0.0),
+            'enterprising': user.get('archetype_enterprising_percentage', 0.0),
+            'conventional': user.get('archetype_conventional_percentage', 0.0)
         }
         
         # Get all jobs
@@ -585,6 +632,307 @@ def get_companies_for_user():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@bp.route('/seed-jobs', methods=['POST'])
+def seed_jobs():
+    """Seed the jobs table with realistic sample job data"""
+    try:
+        from app.services.job_scraper import JobScraper
+        supabase = get_supabase_client()
+        
+        # Create job scraper instance to use its URL generation methods
+        scraper = JobScraper()
+        
+        # Sample job data with improved URLs using the scraper's URL generation
+        sample_jobs = [
+            {
+                "title": "Software Developer",
+                "company": "Accenture Philippines",
+                "location": "Makati City, Philippines",
+                "employment_type": "Full-time",
+                "remote": False,
+                "salary_min": 45000,
+                "salary_max": 80000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("Software Developer", "software developer", 0),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-20T10:00:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["software", "development", "entry-level"],
+                "description": "Join our dynamic team as a Software Developer. Work on cutting-edge projects and develop your skills in a collaborative environment."
+            },
+            {
+                "title": "Data Analyst",
+                "company": "Concentrix",
+                "location": "BGC, Taguig, Philippines",
+                "employment_type": "Full-time",
+                "remote": True,
+                "salary_min": 40000,
+                "salary_max": 70000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("Data Analyst", "data analyst", 1),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-19T14:30:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["data", "analytics", "entry-level"],
+                "description": "We're looking for a Data Analyst to help us make sense of complex data and drive business decisions."
+            },
+            {
+                "title": "UI/UX Designer",
+                "company": "IBM Philippines",
+                "location": "Quezon City, Philippines",
+                "employment_type": "Full-time",
+                "remote": False,
+                "salary_min": 50000,
+                "salary_max": 90000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("UI/UX Designer", "ui ux designer", 2),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-18T09:15:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["design", "ui", "ux", "creative"],
+                "description": "Create beautiful and intuitive user experiences. Join our design team and help shape the future of our products."
+            },
+            {
+                "title": "System Analyst",
+                "company": "Cognizant",
+                "location": "Manila, Philippines",
+                "employment_type": "Full-time",
+                "remote": False,
+                "salary_min": 55000,
+                "salary_max": 85000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("System Analyst", "system analyst", 3),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-17T16:45:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["system", "analysis", "technical"],
+                "description": "Analyze business requirements and design system solutions. Work with stakeholders to deliver high-quality systems."
+            },
+            {
+                "title": "Junior Project Manager",
+                "company": "Deloitte Philippines",
+                "location": "Makati City, Philippines",
+                "employment_type": "Full-time",
+                "remote": False,
+                "salary_min": 60000,
+                "salary_max": 95000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("Junior Project Manager", "junior project manager", 4),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-16T11:20:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["project", "management", "leadership"],
+                "description": "Start your project management career with us. Learn from experienced professionals and manage exciting projects."
+            },
+            {
+                "title": "Business Analyst",
+                "company": "PwC Philippines",
+                "location": "BGC, Taguig, Philippines",
+                "employment_type": "Full-time",
+                "remote": True,
+                "salary_min": 50000,
+                "salary_max": 80000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("Business Analyst", "business analyst", 5),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-15T13:10:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["business", "analysis", "consulting"],
+                "description": "Help businesses optimize their processes and achieve their goals. Join our consulting team."
+            },
+            {
+                "title": "Frontend Developer",
+                "company": "Globe Telecom",
+                "location": "Taguig, Philippines",
+                "employment_type": "Full-time",
+                "remote": False,
+                "salary_min": 45000,
+                "salary_max": 75000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("Frontend Developer", "frontend developer", 6),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-14T08:30:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["frontend", "web", "development"],
+                "description": "Build amazing user interfaces for our digital products. Work with modern technologies and frameworks."
+            },
+            {
+                "title": "Quality Assurance Engineer",
+                "company": "PLDT",
+                "location": "Makati City, Philippines",
+                "employment_type": "Full-time",
+                "remote": False,
+                "salary_min": 40000,
+                "salary_max": 70000,
+                "currency": "PHP",
+                "url": scraper._generate_realistic_job_url("Quality Assurance Engineer", "quality assurance engineer", 7),
+                "source": "LinkedIn Jobs",
+                "posted_at": "2025-08-13T15:45:00Z",
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+                "tags": ["qa", "testing", "quality"],
+                "description": "Ensure the quality of our software products. Work with development teams to deliver bug-free applications."
+            }
+        ]
+        
+        # Insert jobs into the database
+        for job in sample_jobs:
+            try:
+                supabase.table('jobs').insert(job).execute()
+            except Exception as e:
+                print(f"Error inserting job {job['title']}: {e}")
+                continue
+        
+        return jsonify({
+            'message': f'Successfully seeded {len(sample_jobs)} jobs',
+            'jobs_added': len(sample_jobs)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Failed to seed jobs', 'error': str(e)}), 500
+
+@bp.route('/dev-compute-archetype', methods=['POST'])
+def dev_compute_archetype():
+    """Development endpoint: Compute archetype for any user by email"""
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '')
+        
+        if not email:
+            return jsonify({'message': 'Email is required'}), 400
+        
+        # Simulate processing delay
+        time.sleep(2)
+        
+        # Simulate archetype computation (in production, use actual ML algorithms)
+        archetype = {
+            'type': 'Analytical Thinker',
+            'description': 'Strong in logical reasoning and systematic problem-solving',
+            'strengths': ['Analytical Skills', 'Problem Solving', 'Technical Excellence'],
+            'score': 8.5,
+            'confidence': 0.92
+        }
+        
+        # Generate archetype percentages (simulated)
+        archetype_percentages = {
+            'realistic': 25.0,
+            'investigative': 30.0,
+            'artistic': 15.0,
+            'social': 10.0,
+            'enterprising': 12.0,
+            'conventional': 8.0
+        }
+        
+        # Career path predictions
+        career_paths = [
+            {
+                'title': 'Software Engineer',
+                'match': 92,
+                'demand': 'High',
+                'salary': '₱45,000 - ₱80,000',
+                'description': 'Design and develop software applications'
+            },
+            {
+                'title': 'Data Scientist',
+                'match': 88,
+                'demand': 'High',
+                'salary': '₱50,000 - ₱90,000',
+                'description': 'Analyze complex data to derive insights'
+            },
+            {
+                'title': 'System Analyst',
+                'match': 85,
+                'demand': 'Medium',
+                'salary': '₱40,000 - ₱70,000',
+                'description': 'Design and improve computer systems'
+            }
+        ]
+        
+        # Company recommendations
+        companies = [
+            {
+                'name': 'Accenture Philippines',
+                'position': 'Junior Software Developer',
+                'posted': '2 days ago',
+                'type': 'Full-time',
+                'location': 'Makati City'
+            },
+            {
+                'name': 'Concentrix',
+                'position': 'Data Analyst',
+                'posted': '1 week ago',
+                'type': 'Full-time',
+                'location': 'BGC, Taguig'
+            },
+            {
+                'name': 'IBM Philippines',
+                'position': 'System Analyst Trainee',
+                'posted': '3 days ago',
+                'type': 'Full-time',
+                'location': 'Quezon City'
+            }
+        ]
+        
+        # Store results
+        results = {
+            'archetype': archetype,
+            'career_paths': career_paths,
+            'companies': companies,
+            'academic_metrics': {
+                'total_subjects': 15,
+                'average_grade': 1.45,
+                'major_subjects_count': 12,
+                'major_average': 1.42,
+                'total_units': 45
+            }
+        }
+        
+        # Save to database
+        try:
+            supabase = get_supabase_client()
+            
+            # Prepare update data
+            update_data = {
+                'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
+                'primary_archetype': archetype['type'],
+                'archetype_realistic_percentage': archetype_percentages['realistic'],
+                'archetype_investigative_percentage': archetype_percentages['investigative'],
+                'archetype_artistic_percentage': archetype_percentages['artistic'],
+                'archetype_social_percentage': archetype_percentages['social'],
+                'archetype_enterprising_percentage': archetype_percentages['enterprising'],
+                'archetype_conventional_percentage': archetype_percentages['conventional'],
+                'tor_notes': json.dumps(results)  # Store all results including career_paths in tor_notes
+            }
+            
+            # Update user record
+            response = supabase.table('users').update(update_data).eq('email', email).execute()
+            
+            if response.data:
+                return jsonify({
+                    'message': 'Archetype computation completed and saved to database',
+                    'results': results,
+                    'saved_to_db': True,
+                    'email': email
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Archetype computation completed but failed to save to database',
+                    'results': results,
+                    'saved_to_db': False,
+                    'email': email
+                }), 200
+                
+        except Exception as db_error:
+            return jsonify({
+                'message': 'Archetype computation completed but database save failed',
+                'results': results,
+                'saved_to_db': False,
+                'db_error': str(db_error),
+                'email': email
+            }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Archetype computation failed', 'error': str(e)}), 500
 
 def get_archetype_keywords(archetype):
     """Get relevant keywords for each RIASEC archetype"""

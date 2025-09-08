@@ -35,7 +35,7 @@ def add_user(current_user):
         return jsonify({"error": str(error)}), 500
 
 
-@bp.route("/upload-tor", methods=["POST"])
+@bp.route("/upload-tor", methods=["POST", "DELETE"])
 def upload_tor():
     """Upload a PDF Transcript of Records and associate it with the user.
 
@@ -44,6 +44,55 @@ def upload_tor():
       - file (or tor): the PDF file
     """
     try:
+        # Handle DELETE request for certificate deletion
+        if request.method == "DELETE":
+            data = request.get_json()
+            email = (data.get('email') or '').strip().lower()
+            certificate_path = data.get('certificate_path')
+            
+            if not email or not certificate_path:
+                return jsonify({'message': 'email and certificate_path are required'}), 400
+            
+            supabase = get_supabase_client()
+            
+            # Get user by email
+            res_user = supabase.table('users').select('id,certificate_paths,certificate_urls,certificates_count').eq('email', email).limit(1).execute()
+            if not res_user.data:
+                return jsonify({'message': 'User not found'}), 404
+            
+            user_data = res_user.data[0]
+            user_id = user_data['id']
+            
+            # Remove certificate from arrays
+            certificate_paths = list(user_data.get('certificate_paths', []))
+            certificate_urls = list(user_data.get('certificate_urls', []))
+            
+            if certificate_path in certificate_paths:
+                index = certificate_paths.index(certificate_path)
+                certificate_paths.pop(index)
+                if index < len(certificate_urls):
+                    certificate_urls.pop(index)
+                
+                # Update user record
+                supabase.table('users').update({
+                    'certificates_count': max(0, user_data.get('certificates_count', 0) - 1),
+                    'certificate_paths': certificate_paths,
+                    'certificate_urls': certificate_urls,
+                }).eq('id', user_id).execute()
+                
+                # Delete from storage
+                try:
+                    bucket = os.getenv('SUPABASE_CERT_BUCKET', 'certificates')
+                    storage = supabase.storage
+                    storage.from_(bucket).remove([certificate_path])
+                except Exception as e:
+                    print(f"Warning: Could not delete from storage: {e}")
+                
+                return jsonify({'message': 'Certificate deleted successfully'}), 200
+            else:
+                return jsonify({'message': 'Certificate not found'}), 404
+        
+        # Handle POST request for file upload
         # Accept either 'file' or 'tor' as the field name
         uploaded_file = request.files.get('file') or request.files.get('tor')
         email = (request.form.get('email') or '').strip().lower()
@@ -53,8 +102,19 @@ def upload_tor():
         if not uploaded_file:
             return jsonify({'message': 'file is required (multipart/form-data)'}), 400
 
-        if uploaded_file.mimetype not in ('application/pdf', 'application/x-pdf'):
-            return jsonify({'message': 'Only PDF files are allowed'}), 400
+        # Allow more file types for certificates
+        allowed_mimetypes = ['application/pdf', 'application/x-pdf']
+        if kind == 'certificate':
+            allowed_mimetypes.extend([
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/png',
+                'image/jpg'
+            ])
+        
+        if uploaded_file.mimetype not in allowed_mimetypes:
+            return jsonify({'message': f'File type {uploaded_file.mimetype} not allowed. For certificates, only PDF, DOC, DOCX, JPG, and PNG files are allowed.'}), 400
 
         supabase = get_supabase_client()
         # Resolve user id from form user_id or email
@@ -87,12 +147,19 @@ def upload_tor():
         # Compute storage path and read bytes
         timestamp = int(time.time())
         prefix = 'tor' if kind == 'tor' else 'cert'
-        object_path = f"{user_id}/{prefix}-{timestamp}.pdf"
+        
+        # Get file extension
+        filename = uploaded_file.filename
+        file_extension = os.path.splitext(filename)[1] if filename else '.pdf'
+        if not file_extension:
+            file_extension = '.pdf'
+        
+        object_path = f"{user_id}/{prefix}-{timestamp}{file_extension}"
         file_bytes = uploaded_file.read()
 
         # Upload to storage
         storage.from_(bucket).upload(object_path, file_bytes, {
-            'contentType': 'application/pdf',
+            'contentType': uploaded_file.mimetype,
             'upsert': 'true'
         })
 
@@ -328,4 +395,50 @@ def get_profile_summary(email):
     except Exception as error:
         current_app.logger.exception('Profile summary failed: %s', error)
         return jsonify({'message': 'Profile summary failed', 'error': str(error)}), 500
+
+
+@bp.route('/delete-tor', methods=['DELETE'])
+def delete_tor():
+    """Delete user's TOR and analysis data"""
+    try:
+        email = request.args.get('email')
+        
+        if not email:
+            return jsonify({'message': 'Email parameter is required'}), 400
+        
+        supabase = get_supabase_client()
+        
+        # Clear TOR-related fields
+        update_data = {
+            'tor_url': None,
+            'tor_notes': None,
+            'tor_uploaded_at': None,
+            'archetype_analyzed_at': None,
+            'primary_archetype': None,
+            'archetype_realistic_percentage': None,
+            'archetype_investigative_percentage': None,
+            'archetype_artistic_percentage': None,
+            'archetype_social_percentage': None,
+            'archetype_enterprising_percentage': None,
+            'archetype_conventional_percentage': None,
+            'career_recommendations': None,
+            'analysis_results': None
+        }
+        
+        response = supabase.table('users').update(update_data).eq('email', email).execute()
+        
+        if response.data:
+            return jsonify({
+                'message': 'TOR and analysis data deleted successfully',
+                'deleted': True
+            }), 200
+        else:
+            return jsonify({
+                'message': 'Failed to delete TOR data',
+                'deleted': False
+            }), 500
+            
+    except Exception as e:
+        current_app.logger.error(f"Error deleting TOR: {str(e)}")
+        return jsonify({'message': 'Failed to delete TOR data', 'error': str(e)}), 500
 

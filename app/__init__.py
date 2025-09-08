@@ -18,14 +18,25 @@ def create_app():
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     
-    # Enable CORS for frontend communication (Vite dev server)
+    # Enable CORS for frontend communication (local dev and Vercel)
     app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024  # 25 MB upload limit
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://frontend-gradalyze-capstone.vercel.app",
+    ]
+    # Also allow any *.vercel.app domain (useful for preview deployments)
+    vercel_regex = r"^https://.*\.vercel\.app$"
+
     CORS(
         app,
-        resources={r"/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}},
+        resources={r"/*": {"origins": allowed_origins + [vercel_regex]}},
         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
+        allow_headers=["Content-Type", "Authorization", "Accept"],
         expose_headers=["Content-Type"],
+        supports_credentials=True,
+        send_wildcard=False,
+        vary_header=True,
     )
     
     # Root route
