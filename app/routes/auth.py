@@ -1,4 +1,4 @@
-"""
+npm"""
 Authentication routes for Gradalyze API
 """
 
@@ -15,7 +15,19 @@ bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 # Sample users (in production, this would be from a database)
 USERS = {}
 
-# Flask-CORS handles OPTIONS responses automatically; no manual handler needed.
+@bp.route('/', methods=['OPTIONS'])
+@bp.route('/<path:path>', methods=['OPTIONS'])
+def handle_options(path=None):
+    """Handle preflight OPTIONS requests for CORS using configured origins."""
+    origin = request.headers.get('Origin', '')
+    response = jsonify({'message': 'OK'})
+    # Reflect only allowed origins defined in CORS config
+    response.headers.add('Vary', 'Origin')
+    response.headers.add('Access-Control-Allow-Origin', origin)
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 def token_required(f):
     """Decorator to require JWT token for protected routes"""

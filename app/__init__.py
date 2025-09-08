@@ -18,25 +18,19 @@ def create_app():
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     
-    # Enable CORS for frontend communication (local dev and Vercel)
+    # Enable CORS for frontend communication (dev and prod)
     app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024  # 25 MB upload limit
-    allowed_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://frontend-gradalyze-capstone.vercel.app",
-    ]
-    # Also allow any *.vercel.app domain (useful for preview deployments)
-    vercel_regex = r"^https://.*\.vercel\.app$"
+    # Allowed origins can be configured via CORS_ORIGINS env var (comma-separated)
+    origins_env = os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
+    allowed_origins = [o.strip() for o in origins_env.split(',') if o.strip()]
 
     CORS(
         app,
-        resources={r"/*": {"origins": allowed_origins + [vercel_regex]}},
+        resources={r"/*": {"origins": allowed_origins}},
         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "Accept"],
         expose_headers=["Content-Type"],
         supports_credentials=True,
-        send_wildcard=False,
-        vary_header=True,
     )
     
     # Root route
