@@ -1,6 +1,4 @@
-npm"""
-Authentication routes for Gradalyze API
-"""
+"""Authentication routes for Gradalyze API"""
 
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash
@@ -85,6 +83,13 @@ def register():
         }
 
         supabase = get_supabase_client()
+
+        # Prevent duplicate accounts by email
+        existing = supabase.table('users').select('id').eq('email', record['email']).limit(1).execute()
+        if existing.data:
+            return jsonify({'message': 'Email already registered'}), 409
+
+        # Attempt insert
         response = supabase.table('users').insert(record).execute()
 
         created = response.data[0] if response.data else {}
@@ -93,7 +98,11 @@ def register():
 
         return jsonify({'message': 'Registration successful', 'user': created}), 201
     except Exception as e:
-        return jsonify({'message': 'Registration failed', 'error': str(e)}), 500
+        # Log detailed error context for debugging (without sensitive data)
+        current_app.logger.exception('Registration failed for email=%s: %s', (data.get('email') if isinstance(data, dict) else 'unknown'), e)
+        # Provide actionable hint if it's likely an RLS/schema issue
+        hint = 'Verify Supabase RLS policies allow inserts and required columns exist.'
+        return jsonify({'message': 'Registration failed', 'error': str(e), 'hint': hint}), 500
 
 @bp.route('/signup', methods=['POST'])
 def signup():
@@ -193,14 +202,8 @@ def profile_by_email():
             return jsonify({'message': 'email is required'}), 400
 
         supabase = get_supabase_client()
-        res = supabase.table('users').select(
-            'id, email, first_name, last_name, course, student_number, created_at, '
-            'primary_archetype, archetype_analyzed_at, '
-            'archetype_realistic_percentage, archetype_investigative_percentage, '
-            'archetype_artistic_percentage, archetype_social_percentage, '
-            'archetype_enterprising_percentage, archetype_conventional_percentage, '
-            'tor_url, tor_notes, tor_uploaded_at'
-        ).eq('email', email).limit(1).execute()
+        # Use '*' to avoid errors when optional columns are missing in some environments
+        res = supabase.table('users').select('*').eq('email', email).limit(1).execute()
         if not res.data:
             return jsonify({'message': 'User not found'}), 404
         row = res.data[0]
@@ -221,9 +224,17 @@ def profile_by_email():
             'archetype_conventional_percentage': row.get('archetype_conventional_percentage'),
             'tor_url': row.get('tor_url'),
             'tor_notes': row.get('tor_notes'),
-            'tor_uploaded_at': row.get('tor_uploaded_at')
+            'tor_uploaded_at': row.get('tor_uploaded_at'),
+            'tor_storage_path': row.get('tor_storage_path'),
+            'certificate_paths': row.get('certificate_paths'),
+            'certificate_urls': row.get('certificate_urls'),
+            'certificates_count': row.get('certificates_count'),
+            'latest_certificate_path': row.get('latest_certificate_path'),
+            'latest_certificate_url': row.get('latest_certificate_url'),
+            'latest_certificate_uploaded_at': row.get('latest_certificate_uploaded_at')
         }), 200
     except Exception as e:
+        current_app.logger.exception('profile-by-email failed for %s: %s', request.args.get('email'), e)
         return jsonify({'message': 'Failed to fetch profile', 'error': str(e)}), 500
 
 

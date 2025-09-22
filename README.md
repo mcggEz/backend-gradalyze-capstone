@@ -1,3 +1,14 @@
+Supabase migrations
+
+This folder will hold plain-SQL migration files and notes for Supabase schema/policy changes performed during development.
+
+Structure:
+- migrations/ - timestamped .sql files
+- notes/ - optional markdown notes explaining intent
+
+Applying:
+- Review each .sql file and apply in Supabase SQL editor or using the Supabase CLI.
+
 # Gradalyze Backend API
 
 Backend service for the Gradalyze academic profiling and career recommendation platform.

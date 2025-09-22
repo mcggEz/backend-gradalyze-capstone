@@ -102,8 +102,16 @@ def upload_tor():
         if not uploaded_file:
             return jsonify({'message': 'file is required (multipart/form-data)'}), 400
 
+        # Debug file info
+        current_app.logger.info(f"Upload attempt - File: {uploaded_file.filename}, MIME: {uploaded_file.mimetype}, Size: {uploaded_file.content_length}, Kind: {kind}")
+
         # Allow more file types for certificates
-        allowed_mimetypes = ['application/pdf', 'application/x-pdf']
+        allowed_mimetypes = [
+            'application/pdf', 
+            'application/x-pdf',
+            'application/octet-stream',  # Some PDFs have this MIME type
+            'text/pdf'  # Some systems use this
+        ]
         if kind == 'certificate':
             allowed_mimetypes.extend([
                 'application/msword',
@@ -114,7 +122,13 @@ def upload_tor():
             ])
         
         if uploaded_file.mimetype not in allowed_mimetypes:
-            return jsonify({'message': f'File type {uploaded_file.mimetype} not allowed. For certificates, only PDF, DOC, DOCX, JPG, and PNG files are allowed.'}), 400
+            error_msg = f'File type {uploaded_file.mimetype} not allowed. '
+            if kind == 'tor':
+                error_msg += 'For transcripts, only PDF files are allowed.'
+            else:
+                error_msg += 'For certificates, only PDF, DOC, DOCX, JPG, and PNG files are allowed.'
+            current_app.logger.warning(f"File type rejected: {uploaded_file.mimetype} for {kind}")
+            return jsonify({'message': error_msg}), 400
 
         supabase = get_supabase_client()
         # Resolve user id from form user_id or email
@@ -193,6 +207,7 @@ def upload_tor():
             supabase.table('users').update({
                 'latest_certificate_url': public_url,
                 'latest_certificate_path': object_path,
+                'latest_certificate_uploaded_at': now_iso,
                 'certificates_count': cert_count + 1,
                 'certificate_paths': certificate_paths,
                 'certificate_urls': certificate_urls,
@@ -401,16 +416,37 @@ def get_profile_summary(email):
 def delete_tor():
     """Delete user's TOR and analysis data"""
     try:
-        email = request.args.get('email')
+        email = (request.args.get('email') or '').strip().lower()
+        if not email and request.is_json:
+            body = request.get_json(silent=True) or {}
+            email = (body.get('email') or '').strip().lower()
         
         if not email:
             return jsonify({'message': 'Email parameter is required'}), 400
         
         supabase = get_supabase_client()
-        
-        # Clear TOR-related fields
+
+        # Fetch user to get storage path
+        user_res = supabase.table('users').select('id, tor_storage_path').eq('email', email).limit(1).execute()
+        if not user_res.data:
+            return jsonify({'message': 'User not found'}), 404
+
+        user_row = user_res.data[0]
+        user_id = user_row.get('id')
+        tor_storage_path = user_row.get('tor_storage_path')
+
+        # Best-effort delete object from storage
+        if tor_storage_path:
+            try:
+                bucket = os.getenv('SUPABASE_TOR_BUCKET') or os.getenv('SUPABASE_BUCKET') or 'tor'
+                supabase.storage.from_(bucket).remove([tor_storage_path])
+            except Exception as e:
+                current_app.logger.warning('Failed to delete TOR object from storage: %s', e)
+
+        # Clear TOR-related fields regardless of storage outcome
         update_data = {
             'tor_url': None,
+            'tor_storage_path': None,
             'tor_notes': None,
             'tor_uploaded_at': None,
             'archetype_analyzed_at': None,
@@ -424,21 +460,38 @@ def delete_tor():
             'career_recommendations': None,
             'analysis_results': None
         }
+
+        # Try direct update under RLS (works if policies allow)
+        try:
+            if user_id is not None:
+                supabase.table('users').update(update_data).eq('id', user_id).execute()
+            supabase.table('users').update(update_data).eq('email', email).execute()
+        except Exception as e:
+            current_app.logger.warning('Direct update blocked by RLS for %s: %s', email, e)
+
+        # Fallback to SECURITY DEFINER RPC to ensure clearing
+        try:
+            supabase.rpc('clear_tor_by_email', {'target_email': email}).execute()
+        except Exception as e:
+            current_app.logger.exception('RPC clear_tor_by_email failed for %s: %s', email, e)
+
+        # Verify
+        verify = supabase.table('users').select('tor_url, tor_storage_path').eq('email', email).limit(1).execute()
+        cleared = False
+        if verify.data:
+            v = verify.data[0]
+            cleared = ((v.get('tor_url') in (None, '')) and (v.get('tor_storage_path') in (None, '')))
+
+        if not cleared:
+            return jsonify({'message': 'TOR fields not cleared; check RLS/permissions', 'cleared': False}), 500
         
-        response = supabase.table('users').update(update_data).eq('email', email).execute()
-        
-        if response.data:
-            return jsonify({
-                'message': 'TOR and analysis data deleted successfully',
-                'deleted': True
-            }), 200
-        else:
-            return jsonify({
-                'message': 'Failed to delete TOR data',
-                'deleted': False
-            }), 500
+        return jsonify({
+            'message': 'TOR and analysis data deleted successfully',
+            'deleted': True,
+            'cleared': True
+        }), 200
             
     except Exception as e:
-        current_app.logger.error(f"Error deleting TOR: {str(e)}")
+        current_app.logger.exception('Error deleting TOR for %s: %s', email if 'email' in locals() else 'unknown', e)
         return jsonify({'message': 'Failed to delete TOR data', 'error': str(e)}), 500
 
