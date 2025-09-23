@@ -30,3 +30,19 @@ def get_supabase_client() -> Client:
     return _cached_client
 
 
+def create_supabase_client(api_key: str) -> Client:
+    """Create a new Supabase client with a specific API key.
+    
+    Args:
+        api_key: The Supabase API key to use
+        
+    Returns:
+        A new Supabase client instance
+    """
+    url = (os.getenv("SUPABASE_URL") or "").strip()
+    if not url:
+        raise RuntimeError("SUPABASE_URL not set in environment")
+    
+    return create_client(url, api_key)
+
+

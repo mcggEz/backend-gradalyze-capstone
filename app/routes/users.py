@@ -4,6 +4,7 @@ from app.services.supabase_client import get_supabase_client
 import os
 import time
 from datetime import datetime, timezone
+import json
 
 
 bp = Blueprint("users", __name__, url_prefix="/api/users")
@@ -46,51 +47,107 @@ def upload_tor():
     try:
         # Handle DELETE request for certificate deletion
         if request.method == "DELETE":
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             email = (data.get('email') or '').strip().lower()
-            certificate_path = data.get('certificate_path')
-            
-            if not email or not certificate_path:
-                return jsonify({'message': 'email and certificate_path are required'}), 400
-            
+            certificate_path = (data.get('certificate_path') or '').strip()
+            certificate_url = (data.get('certificate_url') or '').strip()
+
+            if not email or (not certificate_path and not certificate_url):
+                return jsonify({'message': 'email and certificate_path or certificate_url are required'}), 400
+
             supabase = get_supabase_client()
-            
+
             # Get user by email
-            res_user = supabase.table('users').select('id,certificate_paths,certificate_urls,certificates_count').eq('email', email).limit(1).execute()
+            res_user = supabase.table('users').select('*').eq('email', email).limit(1).execute()
             if not res_user.data:
                 return jsonify({'message': 'User not found'}), 404
-            
+
             user_data = res_user.data[0]
-            user_id = user_data['id']
-            
-            # Remove certificate from arrays
-            certificate_paths = list(user_data.get('certificate_paths', []))
-            certificate_urls = list(user_data.get('certificate_urls', []))
-            
-            if certificate_path in certificate_paths:
-                index = certificate_paths.index(certificate_path)
-                certificate_paths.pop(index)
-                if index < len(certificate_urls):
-                    certificate_urls.pop(index)
-                
-                # Update user record
-                supabase.table('users').update({
-                    'certificates_count': max(0, user_data.get('certificates_count', 0) - 1),
-                    'certificate_paths': certificate_paths,
-                    'certificate_urls': certificate_urls,
-                }).eq('id', user_id).execute()
-                
-                # Delete from storage
+            user_id = user_data.get('id')
+
+            # Normalize arrays (handle null/strings)
+            def to_list(v):
+                if v is None:
+                    return []
+                if isinstance(v, list):
+                    return list(v)
+                if isinstance(v, str):
+                    try:
+                        parsed = json.loads(v)
+                        if isinstance(parsed, list):
+                            return parsed
+                    except Exception:
+                        pass
+                    return [s.strip() for s in v.split(',') if s.strip()]
+                return []
+
+            certificate_paths = to_list(user_data.get('certificate_paths'))
+            certificate_urls = to_list(user_data.get('certificate_urls'))
+
+            # If only URL provided, try to match by URL or by trailing path segment
+            target_index = -1
+            if certificate_path:
+                if certificate_path in certificate_paths:
+                    target_index = certificate_paths.index(certificate_path)
+                else:
+                    # sometimes frontend sends full URL as path
+                    for i, p in enumerate(certificate_paths):
+                        if p and (p == certificate_path or certificate_path.endswith('/' + p)):
+                            target_index = i
+                            break
+            elif certificate_url:
+                if certificate_url in certificate_urls:
+                    target_index = certificate_urls.index(certificate_url)
+                else:
+                    # map URL to path by suffix
+                    for i, u in enumerate(certificate_urls):
+                        if u and certificate_url and (u == certificate_url or certificate_url.endswith('/' + (certificate_paths[i] if i < len(certificate_paths) else ''))):
+                            target_index = i
+                            break
+
+            if target_index == -1:
+                return jsonify({'message': 'Certificate not found'}), 404
+
+            # Values to remove
+            removed_path = certificate_paths[target_index] if target_index < len(certificate_paths) else None
+            if target_index < len(certificate_paths):
+                certificate_paths.pop(target_index)
+            if target_index < len(certificate_urls):
+                certificate_urls.pop(target_index)
+
+            # Build update only for existing columns, also clear latest if needed
+            existing_columns = set(user_data.keys())
+            potential_updates = {
+                'certificates_count': max(0, int(user_data.get('certificates_count') or 0) - 1),
+                'certificate_paths': certificate_paths,
+                'certificate_urls': certificate_urls,
+            }
+            # Clear latest fields if they match removed
+            latest_path = (user_data.get('latest_certificate_path') or '').strip()
+            latest_url = (user_data.get('latest_certificate_url') or '').strip()
+            if removed_path and latest_path and (removed_path == latest_path or latest_path.endswith('/' + removed_path)):
+                potential_updates['latest_certificate_path'] = None
+            if certificate_url and latest_url and (certificate_url == latest_url or latest_url.endswith('/' + (removed_path or ''))):
+                potential_updates['latest_certificate_url'] = None
+            # If arrays are now empty, clear latest fields if present
+            if not certificate_paths:
+                potential_updates['latest_certificate_path'] = None
+            if not certificate_urls:
+                potential_updates['latest_certificate_url'] = None
+            update_data = {k: v for k, v in potential_updates.items() if k in existing_columns}
+            if update_data:
+                current_app.logger.info('[CERT_DELETE] updating user %s with %s', user_id, update_data)
+                supabase.table('users').update(update_data).eq('id', user_id).execute()
+
+            # Delete from storage if we have a path
+            if removed_path:
                 try:
                     bucket = os.getenv('SUPABASE_CERT_BUCKET', 'certificates')
-                    storage = supabase.storage
-                    storage.from_(bucket).remove([certificate_path])
+                    supabase.storage.from_(bucket).remove([removed_path])
                 except Exception as e:
-                    print(f"Warning: Could not delete from storage: {e}")
-                
-                return jsonify({'message': 'Certificate deleted successfully'}), 200
-            else:
-                return jsonify({'message': 'Certificate not found'}), 404
+                    current_app.logger.warning('Certificate storage delete warning: %s', e)
+
+            return jsonify({'message': 'Certificate deleted successfully'}), 200
         
         # Handle POST request for file upload
         # Accept either 'file' or 'tor' as the field name
@@ -167,15 +224,63 @@ def upload_tor():
         file_extension = os.path.splitext(filename)[1] if filename else '.pdf'
         if not file_extension:
             file_extension = '.pdf'
-        
-        object_path = f"{user_id}/{prefix}-{timestamp}{file_extension}"
+
+        # For TOR enforce exactly one file per user by using a fixed path and deleting any previous TOR
+        if kind == 'tor':
+            # Determine previous TOR path
+            try:
+                prev_q = supabase.table('users').select('tor_storage_path').eq('id', user_id).limit(1).execute()
+                prev_path = prev_q.data[0].get('tor_storage_path') if prev_q.data else None
+            except Exception:
+                prev_path = None
+
+            # Always use a fixed file name to guarantee overwrite
+            object_path = f"{user_id}/transcript{file_extension.lower()}"
+
+            # If previous path exists and is different, remove it to keep only one TOR in storage
+            if prev_path and prev_path != object_path:
+                try:
+                    bucket_del = os.getenv('SUPABASE_TOR_BUCKET') or os.getenv('SUPABASE_BUCKET') or 'tor'
+                    supabase.storage.from_(bucket_del).remove([prev_path])
+                except Exception as e:
+                    current_app.logger.warning('Could not delete previous TOR from storage: %s', e)
+        else:
+            # For certificates, preserve original file name (sanitize)
+            original_base = os.path.basename(filename) if filename else f"{prefix}{file_extension}"
+            safe_name = ''.join(ch if ch.isalnum() or ch in ['.', '-', '_'] else '-' for ch in original_base).strip('-')
+            if not safe_name:
+                safe_name = f"{prefix}{file_extension}"
+            object_path = f"{user_id}/{safe_name}"
         file_bytes = uploaded_file.read()
 
-        # Upload to storage
-        storage.from_(bucket).upload(object_path, file_bytes, {
-            'contentType': uploaded_file.mimetype,
-            'upsert': 'true'
-        })
+        # Upload to storage with robust error handling
+        try:
+            storage.from_(bucket).upload(object_path, file_bytes, {
+                'contentType': uploaded_file.mimetype,
+                'upsert': 'true'
+            })
+        except Exception as e:
+            # Retry with service role client; also ensure bucket exists (public)
+            current_app.logger.warning('[UPLOAD] primary upload failed, retrying with service role: %s', e)
+            try:
+                from app.services.supabase_client import create_supabase_client
+                sr_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+                if sr_key:
+                    sr_client = create_supabase_client(sr_key)
+                    # Ensure bucket exists and is public
+                    try:
+                        sr_client.storage.create_bucket(bucket, public=True)
+                    except Exception:
+                        pass
+                    sr_client.storage.from_(bucket).upload(object_path, file_bytes, {
+                        'contentType': uploaded_file.mimetype,
+                        'upsert': 'true'
+                    })
+                else:
+                    raise RuntimeError('Service role key not configured')
+            except Exception as e2:
+                current_app.logger.exception('[UPLOAD] storage upload failed (both attempts): bucket=%s path=%s mime=%s err=%s', bucket, object_path, uploaded_file.mimetype, e2)
+                return jsonify({'message': 'Storage upload failed', 'error': str(e2), 'bucket': bucket, 'path': object_path}), 500
 
         # Build public URL (bucket must be public)
         base_url = os.getenv('SUPABASE_URL', '').rstrip('/')
@@ -184,35 +289,70 @@ def upload_tor():
         # Update user record
         now_iso = datetime.now(timezone.utc).isoformat()
         if kind == 'certificate':
-            # Increment certificates_count and append to arrays
-            cert_count = 0
-            certificate_paths: list[str] = []
-            certificate_urls: list[str] = []
+            current_app.logger.info('[CERT_UPLOAD] processing certificate for user_id=%s', user_id)
+            # Read full row so we can update only columns that exist in this environment
             try:
-                q = supabase.table('users').select('certificates_count, certificate_paths, certificate_urls').eq('id', user_id).limit(1).execute()
-                if q.data:
-                    row = q.data[0]
-                    if isinstance(row.get('certificates_count'), (int, float)):
-                        cert_count = int(row['certificates_count'])
-                    if isinstance(row.get('certificate_paths'), list):
-                        certificate_paths = list(row['certificate_paths'])
-                    if isinstance(row.get('certificate_urls'), list):
-                        certificate_urls = list(row['certificate_urls'])
-            except Exception:
-                pass
+                q = supabase.table('users').select('*').eq('id', user_id).limit(1).execute()
+                row = q.data[0] if q.data else {}
+            except Exception as e:
+                current_app.logger.warning('[CERT_UPLOAD] failed to read user row: %s', e)
+                row = {}
 
-            certificate_paths.append(object_path)
-            certificate_urls.append(public_url)
+            # Determine existing values
+            cert_count = 0
+            if isinstance(row.get('certificates_count'), (int, float)):
+                cert_count = int(row['certificates_count'])
 
-            supabase.table('users').update({
+            certificate_paths: list[str] = []
+            if isinstance(row.get('certificate_paths'), list):
+                certificate_paths = list(row['certificate_paths'])
+
+            certificate_urls: list[str] = []
+            if isinstance(row.get('certificate_urls'), list):
+                certificate_urls = list(row['certificate_urls'])
+
+            current_app.logger.info('[CERT_UPLOAD] existing data: count=%s, paths=%s, urls=%s', cert_count, certificate_paths, certificate_urls)
+
+            # Append new (dedupe by path); keep arrays aligned
+            if object_path in certificate_paths:
+                idx = certificate_paths.index(object_path)
+                if idx < len(certificate_urls):
+                    certificate_urls[idx] = public_url
+                else:
+                    while len(certificate_urls) < idx:
+                        certificate_urls.append('')
+                    certificate_urls.append(public_url)
+            else:
+                certificate_paths.append(object_path)
+                certificate_urls.append(public_url)
+
+            # Prepare full set of potential updates
+            potential_updates = {
                 'latest_certificate_url': public_url,
                 'latest_certificate_path': object_path,
                 'latest_certificate_uploaded_at': now_iso,
-                'certificates_count': cert_count + 1,
+                'certificates_count': len(certificate_paths) if certificate_paths else cert_count + 1,
                 'certificate_paths': certificate_paths,
                 'certificate_urls': certificate_urls,
-            }).eq('id', user_id).execute()
+            }
+
+            # Only include columns that actually exist in this schema
+            existing_columns = set(row.keys())
+            update_data = {k: v for k, v in potential_updates.items() if k in existing_columns}
+
+            # If none of the cert columns exist (unlikely), fall back to no-op safe update on id to avoid 500
+            if not update_data:
+                current_app.logger.warning('[CERT_UPLOAD] No matching certificate columns found in schema; skipping user row update')
+            else:
+                current_app.logger.info('[CERT_UPLOAD] updating with data: %s', update_data)
+                try:
+                    result = supabase.table('users').update(update_data).eq('id', user_id).execute()
+                    current_app.logger.info('[CERT_UPLOAD] update result: %s', result.data)
+                except Exception as e:
+                    current_app.logger.exception('[CERT_UPLOAD] update failed: %s', e)
+                    return jsonify({'message': 'Certificate metadata update failed', 'error': str(e)}), 500
         else:
+            # Update TOR pointers
             supabase.table('users').update({
                 'tor_url': public_url,
                 'tor_storage_path': object_path,
@@ -220,7 +360,53 @@ def upload_tor():
                 'tor_uploaded_at': now_iso
             }).eq('id', user_id).execute()
 
-        current_app.logger.info('Uploaded TOR for user %s (id=%s) to %s', email, user_id, object_path)
+            # Auto-analyze the newly uploaded TOR to refresh archetype percentages
+            try:
+                # Download the PDF from storage
+                tor_bucket = os.getenv('SUPABASE_TOR_BUCKET') or os.getenv('SUPABASE_BUCKET') or 'tor'
+                file_bytes = supabase.storage.from_(tor_bucket).download(object_path)
+
+                import io
+                import pdfplumber
+                from app.services.academic_analyzer import AcademicAnalyzer
+
+                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                    pages_text = [page.extract_text() or '' for page in pdf.pages]
+                full_text = '\n'.join(pages_text)
+
+                analyzer = AcademicAnalyzer()
+                academic_analysis = analyzer.analyze_transcript(full_text)
+
+                # Prepare update payload from analysis
+                import json as _json
+                learning_archetype = academic_analysis.get('learning_archetype', {})
+                archetype_percentages = learning_archetype.get('archetype_percentages', {})
+                primary_archetype = learning_archetype.get('primary_archetype', '')
+
+                update_data = {
+                    'tor_notes': _json.dumps(academic_analysis),
+                    'primary_archetype': primary_archetype,
+                    'archetype_analyzed_at': datetime.now(timezone.utc).isoformat()
+                }
+
+                mapping = {
+                    'realistic': 'archetype_realistic_percentage',
+                    'investigative': 'archetype_investigative_percentage',
+                    'artistic': 'archetype_artistic_percentage',
+                    'social': 'archetype_social_percentage',
+                    'enterprising': 'archetype_enterprising_percentage',
+                    'conventional': 'archetype_conventional_percentage'
+                }
+                for k, v in archetype_percentages.items():
+                    if k in mapping:
+                        update_data[mapping[k]] = v
+
+                supabase.table('users').update(update_data).eq('id', user_id).execute()
+                current_app.logger.info('Auto-analysis complete for user %s (id=%s)', email, user_id)
+            except Exception as e:
+                current_app.logger.warning('Auto-analysis failed for user %s: %s', email, e)
+
+        current_app.logger.info('Uploaded file for user %s (id=%s) to %s (kind=%s)', email, user_id, object_path, kind)
         return jsonify({
             'message': 'Upload successful',
             'user_id': user_id,
@@ -417,6 +603,7 @@ def delete_tor():
     """Delete user's TOR and analysis data"""
     try:
         email = (request.args.get('email') or '').strip().lower()
+        current_app.logger.info('[DELETE_TOR] incoming request for email=%s', email)
         if not email and request.is_json:
             body = request.get_json(silent=True) or {}
             email = (body.get('email') or '').strip().lower()
@@ -426,24 +613,7 @@ def delete_tor():
         
         supabase = get_supabase_client()
 
-        # Fetch user to get storage path
-        user_res = supabase.table('users').select('id, tor_storage_path').eq('email', email).limit(1).execute()
-        if not user_res.data:
-            return jsonify({'message': 'User not found'}), 404
-
-        user_row = user_res.data[0]
-        user_id = user_row.get('id')
-        tor_storage_path = user_row.get('tor_storage_path')
-
-        # Best-effort delete object from storage
-        if tor_storage_path:
-            try:
-                bucket = os.getenv('SUPABASE_TOR_BUCKET') or os.getenv('SUPABASE_BUCKET') or 'tor'
-                supabase.storage.from_(bucket).remove([tor_storage_path])
-            except Exception as e:
-                current_app.logger.warning('Failed to delete TOR object from storage: %s', e)
-
-        # Clear TOR-related fields regardless of storage outcome
+        # Simple approach - just clear the core TOR fields (avoid non-existent columns)
         update_data = {
             'tor_url': None,
             'tor_storage_path': None,
@@ -456,34 +626,22 @@ def delete_tor():
             'archetype_artistic_percentage': None,
             'archetype_social_percentage': None,
             'archetype_enterprising_percentage': None,
-            'archetype_conventional_percentage': None,
-            'career_recommendations': None,
-            'analysis_results': None
+            'archetype_conventional_percentage': None
         }
 
-        # Try direct update under RLS (works if policies allow)
-        try:
-            if user_id is not None:
-                supabase.table('users').update(update_data).eq('id', user_id).execute()
-            supabase.table('users').update(update_data).eq('email', email).execute()
-        except Exception as e:
-            current_app.logger.warning('Direct update blocked by RLS for %s: %s', email, e)
-
-        # Fallback to SECURITY DEFINER RPC to ensure clearing
-        try:
-            supabase.rpc('clear_tor_by_email', {'target_email': email}).execute()
-        except Exception as e:
-            current_app.logger.exception('RPC clear_tor_by_email failed for %s: %s', email, e)
+        current_app.logger.info('[DELETE_TOR] update payload=%s', update_data)
+        # Direct update - same as test code
+        result = supabase.table('users').update(update_data).eq('email', email).execute()
+        current_app.logger.info('[DELETE_TOR] update result=%s', result.data)
 
         # Verify
         verify = supabase.table('users').select('tor_url, tor_storage_path').eq('email', email).limit(1).execute()
-        cleared = False
+        current_app.logger.info('[DELETE_TOR] verify after update=%s', verify.data)
         if verify.data:
-            v = verify.data[0]
-            cleared = ((v.get('tor_url') in (None, '')) and (v.get('tor_storage_path') in (None, '')))
-
-        if not cleared:
-            return jsonify({'message': 'TOR fields not cleared; check RLS/permissions', 'cleared': False}), 500
+            row = verify.data[0]
+            cleared = ((row.get('tor_url') in (None, '')) and (row.get('tor_storage_path') in (None, '')))
+            if not cleared:
+                return jsonify({'message': 'Failed to clear TOR data', 'verify': row}), 500
         
         return jsonify({
             'message': 'TOR and analysis data deleted successfully',
@@ -492,6 +650,6 @@ def delete_tor():
         }), 200
             
     except Exception as e:
-        current_app.logger.exception('Error deleting TOR for %s: %s', email if 'email' in locals() else 'unknown', e)
+        current_app.logger.exception('[DELETE_TOR] error for %s: %s', email if 'email' in locals() else 'unknown', e)
         return jsonify({'message': 'Failed to delete TOR data', 'error': str(e)}), 500
 
