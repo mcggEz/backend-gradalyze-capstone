@@ -3,12 +3,10 @@ Analysis routes for academic processing and archetype computation
 """
 
 from flask import Blueprint, request, jsonify
-from werkzeug.utils import secure_filename
-import os
-import time
 from app.routes.auth import token_required
 from app.services.supabase_client import get_supabase_client
-from app.services.academic_analyzer import AcademicAnalyzer
+from app.services.features import build_feature_vector_from_grades
+from app.services.ml_models import predict_career_scores, predict_archetype_kmeans
 import json
 import re
 from collections import Counter
@@ -16,308 +14,70 @@ from datetime import datetime, timezone
 
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
-# Temporary storage for demo (in production, use proper database)
-user_analysis_data = {}
+## Removed demo endpoints: upload/extract/validate/admin-review (kept production analysis routes only)
 
-@bp.route('/upload', methods=['POST'])
-@token_required
-def upload_documents(current_user):
-    """Upload transcript and certificates"""
-    try:
-        if 'transcript' not in request.files:
-            return jsonify({'message': 'Transcript file is required'}), 400
-        
-        transcript = request.files['transcript']
-        certificates = request.files.getlist('certificates')
-        
-        if transcript.filename == '':
-            return jsonify({'message': 'No transcript file selected'}), 400
-        
-        # Simulate file processing
-        uploaded_files = {
-            'transcript': {
-                'filename': secure_filename(transcript.filename),
-                'size': len(transcript.read()),
-                'uploaded_at': time.time()
-            },
-            'certificates': []
-        }
-        
-        for cert in certificates:
-            if cert.filename:
-                uploaded_files['certificates'].append({
-                    'filename': secure_filename(cert.filename),
-                    'size': len(cert.read()),
-                    'uploaded_at': time.time()
-                })
-        
-        # Store user data
-        if current_user not in user_analysis_data:
-            user_analysis_data[current_user] = {}
-        
-        user_analysis_data[current_user]['uploaded_files'] = uploaded_files
-        user_analysis_data[current_user]['status'] = 'uploaded'
-        
-        return jsonify({
-            'message': 'Files uploaded successfully',
-            'files': uploaded_files
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Upload failed', 'error': str(e)}), 500
 
-@bp.route('/extract-grades', methods=['POST'])
-@token_required
-def extract_grades(current_user):
-    """Simulate grade extraction from transcript"""
-    try:
-        # Simulate OCR processing delay
-        time.sleep(2)
-        
-        # Sample extracted grades (in production, this would use OCR)
-        extracted_grades = [
-            {
-                'subject': 'Data Structures & Algorithms',
-                'grade': 1.25,
-                'units': 3,
-                'semester': '1st Sem 2023',
-                'category': 'Major'
-            },
-            {
-                'subject': 'Database Systems',
-                'grade': 1.50,
-                'units': 3,
-                'semester': '1st Sem 2023',
-                'category': 'Major'
-            },
-            {
-                'subject': 'Software Engineering',
-                'grade': 1.75,
-                'units': 3,
-                'semester': '2nd Sem 2023',
-                'category': 'Major'
-            },
-            {
-                'subject': 'Computer Networks',
-                'grade': 1.25,
-                'units': 3,
-                'semester': '2nd Sem 2023',
-                'category': 'Major'
-            },
-            {
-                'subject': 'Mathematics for CS',
-                'grade': 2.00,
-                'units': 3,
-                'semester': '1st Sem 2022',
-                'category': 'Minor'
-            }
-        ]
-        
-        # Store extracted grades
-        user_analysis_data[current_user]['extracted_grades'] = extracted_grades
-        user_analysis_data[current_user]['status'] = 'extracted'
-        
-        return jsonify({
-            'message': 'Grades extracted successfully',
-            'grades': extracted_grades
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Grade extraction failed', 'error': str(e)}), 500
+@bp.route('/process', methods=['POST'])
+def process_analysis_v1():
+    """Compute Obj1 (career forecast) + Obj2 (archetype) from provided grades and persist to users.
 
-@bp.route('/validate-grades', methods=['POST'])
-def validate_grades():
-    """Validate and confirm extracted grades"""
+    Body JSON: { email: str, grades: [{ subject, units, grade, semester } ...] }
+    """
     try:
-        data = request.get_json()
-        validated_grades = data.get('grades', [])
-        
-        if not validated_grades:
-            return jsonify({'message': 'No grades provided for validation'}), 400
-        
-        # For now, just return success without storing (since we removed user context)
-        # In production, you'd store this in a database with proper user association
-        
-        return jsonify({
-            'message': 'Grades validated successfully',
-            'grades': validated_grades
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Grade validation failed', 'error': str(e)}), 500
+        data = request.get_json(silent=True) or {}
+        email = (data.get('email') or '').strip().lower()
+        grades = data.get('grades') or []
+        if not email or not isinstance(grades, list):
+            return jsonify({'message': 'email and grades are required'}), 400
 
-@bp.route('/admin-review', methods=['POST'])
-@token_required
-def admin_review(current_user):
-    """Simulate admin review process"""
-    try:
-        # Simulate admin review delay
-        time.sleep(2)
-        
-        user_analysis_data[current_user]['status'] = 'admin_approved'
-        user_analysis_data[current_user]['admin_review'] = {
-            'approved_by': 'admin@gradalyze.com',
-            'approved_at': time.time(),
-            'notes': 'Academic records verified and approved'
-        }
-        
-        return jsonify({
-            'message': 'Admin review completed',
-            'status': 'approved'
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Admin review failed', 'error': str(e)}), 500
+        supabase = get_supabase_client()
+        res_user = supabase.table('users').select('id, tor_notes').eq('email', email).limit(1).execute()
+        if not res_user.data:
+            return jsonify({'message': 'User not found'}), 404
+        user = res_user.data[0]
 
-@bp.route('/compute-archetype', methods=['POST'])
-def compute_archetype():
-    """Compute learning archetype using K-Means clustering simulation"""
-    try:
-        data = request.get_json() or {}
-        validated_grades = data.get('grades', [])
-        email = data.get('email', '')
-        
-        if not validated_grades:
-            return jsonify({'message': 'No validated grades found'}), 400
-        
-        if not email:
-            return jsonify({'message': 'Email is required for database storage'}), 400
-        
-        # Simulate processing delay
-        time.sleep(3)
-        
-        # Calculate basic metrics
-        total_grades = len(validated_grades)
-        average_grade = sum(g['grade'] for g in validated_grades) / total_grades
-        major_subjects = [g for g in validated_grades if g['category'] == 'Major']
-        major_average = sum(g['grade'] for g in major_subjects) / len(major_subjects) if major_subjects else 0
-        
-        # Simulate archetype computation (in production, use actual ML algorithms)
-        archetype = {
-            'type': 'Analytical Thinker',
-            'description': 'Strong in logical reasoning and systematic problem-solving',
-            'strengths': ['Analytical Skills', 'Problem Solving', 'Technical Excellence'],
-            'score': 8.5,
-            'confidence': 0.92
-        }
-        
-        # Generate archetype percentages (simulated)
-        archetype_percentages = {
-            'realistic': 25.0,
-            'investigative': 30.0,
-            'artistic': 15.0,
-            'social': 10.0,
-            'enterprising': 12.0,
-            'conventional': 8.0
-        }
-        
-        # Career path predictions
-        career_paths = [
-            {
-                'title': 'Software Engineer',
-                'match': 92,
-                'demand': 'High',
-                'salary': '₱45,000 - ₱80,000',
-                'description': 'Design and develop software applications'
-            },
-            {
-                'title': 'Data Scientist',
-                'match': 88,
-                'demand': 'High',
-                'salary': '₱50,000 - ₱90,000',
-                'description': 'Analyze complex data to derive insights'
-            },
-            {
-                'title': 'System Analyst',
-                'match': 85,
-                'demand': 'Medium',
-                'salary': '₱40,000 - ₱70,000',
-                'description': 'Design and improve computer systems'
-            }
-        ]
-        
-        # Company recommendations
-        companies = [
-            {
-                'name': 'Accenture Philippines',
-                'position': 'Junior Software Developer',
-                'posted': '2 days ago',
-                'type': 'Full-time',
-                'location': 'Makati City'
-            },
-            {
-                'name': 'Concentrix',
-                'position': 'Data Analyst',
-                'posted': '1 week ago',
-                'type': 'Full-time',
-                'location': 'BGC, Taguig'
-            },
-            {
-                'name': 'IBM Philippines',
-                'position': 'System Analyst Trainee',
-                'posted': '3 days ago',
-                'type': 'Full-time',
-                'location': 'Quezon City'
-            }
-        ]
-        
-        # Store results
-        results = {
-            'archetype': archetype,
-            'career_paths': career_paths,
-            'companies': companies,
-            'academic_metrics': {
-                'total_subjects': total_grades,
-                'average_grade': round(average_grade, 2),
-                'major_subjects_count': len(major_subjects),
-                'major_average': round(major_average, 2),
-                'total_units': sum(g['units'] for g in validated_grades)
-            }
-        }
-        
-        # Save to database
+        # Build features and run models
+        vec = build_feature_vector_from_grades(grades)
+        career_scores = predict_career_scores(vec)
+        cluster_id, km_perc = predict_archetype_kmeans(vec)
+
+        import json as _json
         try:
-            supabase = get_supabase_client()
-            
-            # Prepare update data
-            update_data = {
+            notes = _json.loads(user.get('tor_notes') or '{}')
+        except Exception:
+            notes = {}
+        ar = notes.get('analysis_results') or {}
+        ar['career_forecast'] = career_scores
+        notes['analysis_results'] = ar
+        notes['grades'] = grades
+
+        from datetime import datetime, timezone
+        update = {
+            'tor_notes': _json.dumps(notes),
                 'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
-                'primary_archetype': archetype['type'],
-                'archetype_realistic_percentage': archetype_percentages['realistic'],
-                'archetype_investigative_percentage': archetype_percentages['investigative'],
-                'archetype_artistic_percentage': archetype_percentages['artistic'],
-                'archetype_social_percentage': archetype_percentages['social'],
-                'archetype_enterprising_percentage': archetype_percentages['enterprising'],
-                'archetype_conventional_percentage': archetype_percentages['conventional'],
-                'tor_notes': json.dumps(results)  # Store all results including career_paths in tor_notes
+            'primary_archetype': max(km_perc, key=km_perc.get) if km_perc else None,
+            'archetype_realistic_percentage': km_perc.get('realistic'),
+            'archetype_investigative_percentage': km_perc.get('investigative'),
+            'archetype_artistic_percentage': km_perc.get('artistic'),
+            'archetype_social_percentage': km_perc.get('social'),
+            'archetype_enterprising_percentage': km_perc.get('enterprising'),
+            'archetype_conventional_percentage': km_perc.get('conventional'),
+        }
+        supabase.table('users').update(update).eq('id', user['id']).execute()
+
+        return jsonify({
+            'message': 'Analysis processed',
+            'career_forecast': career_scores,
+            'archetype': {
+                'primary': update.get('primary_archetype'),
+                'percentages': km_perc,
+                'cluster_id': cluster_id
             }
-            
-            # Update user record
-            response = supabase.table('users').update(update_data).eq('email', email).execute()
-            
-            if response.data:
-                return jsonify({
-                    'message': 'Archetype computation completed and saved to database',
-                    'results': results,
-                    'saved_to_db': True
-                }), 200
-            else:
-                return jsonify({
-                    'message': 'Archetype computation completed but failed to save to database',
-                    'results': results,
-                    'saved_to_db': False
-                }), 200
-                
-        except Exception as db_error:
-            return jsonify({
-                'message': 'Archetype computation completed but database save failed',
-                'results': results,
-                'saved_to_db': False,
-                'db_error': str(db_error)
-            }), 200
-        
+        }), 200
     except Exception as e:
-        return jsonify({'message': 'Archetype computation failed', 'error': str(e)}), 500
+        return jsonify({'message': 'Process analysis failed', 'error': str(e)}), 500
+
+## Removed legacy placeholder endpoint: /compute-archetype
 
 @bp.route('/save-existing-results', methods=['POST'])
 def save_existing_results():
@@ -379,23 +139,7 @@ def save_existing_results():
     except Exception as e:
         return jsonify({'message': 'Failed to save results', 'error': str(e)}), 500
 
-@bp.route('/results', methods=['GET'])
-@token_required
-def get_results(current_user):
-    """Get analysis results"""
-    try:
-        if current_user not in user_analysis_data:
-            return jsonify({'message': 'No analysis data found'}), 404
-        
-        user_data = user_analysis_data[current_user]
-        
-        return jsonify({
-            'status': user_data.get('status', 'not_started'),
-            'results': user_data.get('results', {})
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Failed to retrieve results', 'error': str(e)}), 500
+## Removed legacy in-memory /results endpoint
 
 @bp.route('/process-analysis', methods=['POST'])
 @token_required
@@ -791,148 +535,7 @@ def seed_jobs():
     except Exception as e:
         return jsonify({'message': 'Failed to seed jobs', 'error': str(e)}), 500
 
-@bp.route('/dev-compute-archetype', methods=['POST'])
-def dev_compute_archetype():
-    """Development endpoint: Compute archetype for any user by email"""
-    try:
-        data = request.get_json() or {}
-        email = data.get('email', '')
-        
-        if not email:
-            return jsonify({'message': 'Email is required'}), 400
-        
-        # Simulate processing delay
-        time.sleep(2)
-        
-        # Simulate archetype computation (in production, use actual ML algorithms)
-        archetype = {
-            'type': 'Analytical Thinker',
-            'description': 'Strong in logical reasoning and systematic problem-solving',
-            'strengths': ['Analytical Skills', 'Problem Solving', 'Technical Excellence'],
-            'score': 8.5,
-            'confidence': 0.92
-        }
-        
-        # Generate archetype percentages (simulated)
-        archetype_percentages = {
-            'realistic': 25.0,
-            'investigative': 30.0,
-            'artistic': 15.0,
-            'social': 10.0,
-            'enterprising': 12.0,
-            'conventional': 8.0
-        }
-        
-        # Career path predictions
-        career_paths = [
-            {
-                'title': 'Software Engineer',
-                'match': 92,
-                'demand': 'High',
-                'salary': '₱45,000 - ₱80,000',
-                'description': 'Design and develop software applications'
-            },
-            {
-                'title': 'Data Scientist',
-                'match': 88,
-                'demand': 'High',
-                'salary': '₱50,000 - ₱90,000',
-                'description': 'Analyze complex data to derive insights'
-            },
-            {
-                'title': 'System Analyst',
-                'match': 85,
-                'demand': 'Medium',
-                'salary': '₱40,000 - ₱70,000',
-                'description': 'Design and improve computer systems'
-            }
-        ]
-        
-        # Company recommendations
-        companies = [
-            {
-                'name': 'Accenture Philippines',
-                'position': 'Junior Software Developer',
-                'posted': '2 days ago',
-                'type': 'Full-time',
-                'location': 'Makati City'
-            },
-            {
-                'name': 'Concentrix',
-                'position': 'Data Analyst',
-                'posted': '1 week ago',
-                'type': 'Full-time',
-                'location': 'BGC, Taguig'
-            },
-            {
-                'name': 'IBM Philippines',
-                'position': 'System Analyst Trainee',
-                'posted': '3 days ago',
-                'type': 'Full-time',
-                'location': 'Quezon City'
-            }
-        ]
-        
-        # Store results
-        results = {
-            'archetype': archetype,
-            'career_paths': career_paths,
-            'companies': companies,
-            'academic_metrics': {
-                'total_subjects': 15,
-                'average_grade': 1.45,
-                'major_subjects_count': 12,
-                'major_average': 1.42,
-                'total_units': 45
-            }
-        }
-        
-        # Save to database
-        try:
-            supabase = get_supabase_client()
-            
-            # Prepare update data
-            update_data = {
-                'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
-                'primary_archetype': archetype['type'],
-                'archetype_realistic_percentage': archetype_percentages['realistic'],
-                'archetype_investigative_percentage': archetype_percentages['investigative'],
-                'archetype_artistic_percentage': archetype_percentages['artistic'],
-                'archetype_social_percentage': archetype_percentages['social'],
-                'archetype_enterprising_percentage': archetype_percentages['enterprising'],
-                'archetype_conventional_percentage': archetype_percentages['conventional'],
-                'tor_notes': json.dumps(results)  # Store all results including career_paths in tor_notes
-            }
-            
-            # Update user record
-            response = supabase.table('users').update(update_data).eq('email', email).execute()
-            
-            if response.data:
-                return jsonify({
-                    'message': 'Archetype computation completed and saved to database',
-                    'results': results,
-                    'saved_to_db': True,
-                    'email': email
-                }), 200
-            else:
-                return jsonify({
-                    'message': 'Archetype computation completed but failed to save to database',
-                    'results': results,
-                    'saved_to_db': False,
-                    'email': email
-                }), 200
-                
-        except Exception as db_error:
-            return jsonify({
-                'message': 'Archetype computation completed but database save failed',
-                'results': results,
-                'saved_to_db': False,
-                'db_error': str(db_error),
-                'email': email
-            }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Archetype computation failed', 'error': str(e)}), 500
+## Removed dev-only endpoint: /dev-compute-archetype
 
 def get_archetype_keywords(archetype):
     """Get relevant keywords for each RIASEC archetype"""
@@ -1018,3 +621,66 @@ def get_archetype_based_skills(archetype_percentages):
         {'name': 'Teamwork', 'relevance': 65.0, 'demand': 'Medium'},
         {'name': 'Adaptability', 'relevance': 60.0, 'demand': 'Medium'}
     ])
+
+
+@bp.route('/process-v2', methods=['POST'])
+def process_analysis_v2():
+    """Compute Obj1 (career forecast) + Obj2 (archetype) from provided grades and persist to users.
+
+    Body JSON: { email: str, grades: [{ subject, units, grade, semester } ...] }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        email = (data.get('email') or '').strip().lower()
+        grades = data.get('grades') or []
+        if not email or not isinstance(grades, list):
+            return jsonify({'message': 'email and grades are required'}), 400
+
+        supabase = get_supabase_client()
+        res_user = supabase.table('users').select('id, tor_notes').eq('email', email).limit(1).execute()
+        if not res_user.data:
+            return jsonify({'message': 'User not found'}), 404
+        user = res_user.data[0]
+
+        # Build features and run models
+        from app.services.features import build_feature_vector_from_grades
+        from app.services.ml_models import predict_career_scores, predict_archetype_kmeans
+        vec = build_feature_vector_from_grades(grades)
+        career_scores = predict_career_scores(vec)
+        cluster_id, km_perc = predict_archetype_kmeans(vec)
+
+        import json as _json
+        try:
+            notes = _json.loads(user.get('tor_notes') or '{}')
+        except Exception:
+            notes = {}
+        ar = notes.get('analysis_results') or {}
+        ar['career_forecast'] = career_scores
+        notes['analysis_results'] = ar
+        notes['grades'] = grades
+
+        from datetime import datetime, timezone
+        update = {
+            'tor_notes': _json.dumps(notes),
+            'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
+            'primary_archetype': max(km_perc, key=km_perc.get) if km_perc else None,
+            'archetype_realistic_percentage': km_perc.get('realistic'),
+            'archetype_investigative_percentage': km_perc.get('investigative'),
+            'archetype_artistic_percentage': km_perc.get('artistic'),
+            'archetype_social_percentage': km_perc.get('social'),
+            'archetype_enterprising_percentage': km_perc.get('enterprising'),
+            'archetype_conventional_percentage': km_perc.get('conventional'),
+        }
+        supabase.table('users').update(update).eq('id', user['id']).execute()
+
+        return jsonify({
+            'message': 'Analysis processed',
+            'career_forecast': career_scores,
+            'archetype': {
+                'primary': update.get('primary_archetype'),
+                'percentages': km_perc,
+                'cluster_id': cluster_id
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'message': 'Process analysis failed', 'error': str(e)}), 500

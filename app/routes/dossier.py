@@ -4,141 +4,136 @@ Dossier generation routes for creating professional portfolios
 
 from flask import Blueprint, request, jsonify
 from app.routes.auth import token_required
-from app.routes.analysis import user_analysis_data
+from app.services.supabase_client import get_supabase_client
+import json
 
 bp = Blueprint('dossier', __name__, url_prefix='/api/dossier')
 
 @bp.route('/generate', methods=['POST'])
 @token_required
 def generate_dossier(current_user):
-    """Generate professional dossier based on analysis results"""
+    """Generate professional dossier based on stored analysis results in Supabase."""
     try:
-        if current_user not in user_analysis_data:
-            return jsonify({'message': 'No analysis data found'}), 404
-        
-        user_data = user_analysis_data[current_user]
-        results = user_data.get('results', {})
-        
-        if not results:
-            return jsonify({'message': 'Analysis must be completed first'}), 400
-        
-        # Generate comprehensive dossier data
+        supabase = get_supabase_client()
+        res = supabase.table('users').select(
+            'email, first_name, last_name, course, primary_archetype, '
+            'archetype_realistic_percentage, archetype_investigative_percentage, archetype_artistic_percentage, '
+            'archetype_social_percentage, archetype_enterprising_percentage, archetype_conventional_percentage, tor_notes'
+        ).eq('email', current_user).limit(1).execute()
+        if not res.data:
+            return jsonify({'message': 'User not found'}), 404
+
+        row = res.data[0]
+        try:
+            notes = json.loads(row.get('tor_notes') or '{}')
+        except Exception:
+            notes = {}
+        # Support both structures: notes.analysis_results.career_forecast or legacy fields
+        analysis_results = notes.get('analysis_results') or notes.get('archetype_analysis') or {}
+        career_forecast = analysis_results.get('career_forecast') or notes.get('career_forecast') or {}
+        grades = notes.get('grades') or notes.get('academic_analysis', {}).get('grades') or []
+
+        # Build academic metrics
+        total_units = sum(float(g.get('units', 0) or 0) for g in grades) if grades else 0
+        total_subjects = len(grades)
+        avg_grade = (sum(float(g.get('grade', 0) or 0) for g in grades) / total_subjects) if total_subjects else 0
+
+        # Career recommendations: take top 3 by score if mapping
+        if isinstance(career_forecast, dict):
+            careers_sorted = sorted(career_forecast.items(), key=lambda kv: kv[1], reverse=True)[:3]
+            career_paths = [
+                {'title': k, 'match': round(float(v) * 100) if v <= 1 else round(float(v)), 'demand': '—', 'salary': '—'}
+                for k, v in careers_sorted
+            ]
+        else:
+            career_paths = career_forecast if isinstance(career_forecast, list) else []
+
         dossier = {
             'personal_info': {
-                'email': current_user,
-                'analysis_date': user_data.get('admin_review', {}).get('approved_at'),
+                'email': row.get('email'),
+                'name': f"{row.get('first_name','')} {row.get('last_name','')}".strip(),
+                'course': row.get('course'),
                 'status': 'Generated'
             },
-            'archetype': results.get('archetype', {}),
-            'academic_performance': results.get('academic_metrics', {}),
-            'career_recommendations': results.get('career_paths', []),
-            'skills_assessment': {
-                'technical_skills': [
-                    {'name': 'Programming', 'level': 90, 'category': 'Technical'},
-                    {'name': 'Database Design', 'level': 85, 'category': 'Technical'},
-                    {'name': 'System Analysis', 'level': 80, 'category': 'Analytical'},
-                    {'name': 'Problem Solving', 'level': 95, 'category': 'Cognitive'},
-                    {'name': 'Technical Writing', 'level': 75, 'category': 'Communication'}
-                ]
+            'archetype': {
+                'type': row.get('primary_archetype'),
+                'percentages': {
+                    'realistic': row.get('archetype_realistic_percentage'),
+                    'investigative': row.get('archetype_investigative_percentage'),
+                    'artistic': row.get('archetype_artistic_percentage'),
+                    'social': row.get('archetype_social_percentage'),
+                    'enterprising': row.get('archetype_enterprising_percentage'),
+                    'conventional': row.get('archetype_conventional_percentage')
+                }
             },
-            'professional_summary': f"A dedicated student with an {results.get('archetype', {}).get('type', 'Unknown')} learning archetype, demonstrating exceptional analytical and problem-solving capabilities.",
-            'generated_at': user_data.get('admin_review', {}).get('approved_at'),
-            'document_id': f"GRAD-{current_user.split('@')[0].upper()}-2025"
+            'academic_performance': {
+                'total_subjects': total_subjects,
+                'total_units': total_units,
+                'average_grade': round(avg_grade, 2)
+            },
+            'career_recommendations': career_paths,
         }
-        
-        # Store dossier
-        user_analysis_data[current_user]['dossier'] = dossier
-        
-        return jsonify({
-            'message': 'Dossier generated successfully',
-            'dossier': dossier
-        }), 200
-        
+
+        return jsonify({'message': 'Dossier generated successfully', 'dossier': dossier}), 200
+
     except Exception as e:
         return jsonify({'message': 'Dossier generation failed', 'error': str(e)}), 500
 
 @bp.route('/download', methods=['GET'])
 @token_required
 def download_dossier(current_user):
-    """Download dossier as PDF (simulated)"""
+    """Download dossier as PDF (stub)."""
     try:
-        if current_user not in user_analysis_data:
-            return jsonify({'message': 'No dossier found'}), 404
-        
-        user_data = user_analysis_data[current_user]
-        dossier = user_data.get('dossier', {})
-        
-        if not dossier:
-            return jsonify({'message': 'Dossier must be generated first'}), 400
-        
-        # In production, this would generate an actual PDF
+        # Stub response; real PDF generation not implemented here
         return jsonify({
             'message': 'PDF generation simulated',
-            'download_url': f'/downloads/dossier-{dossier.get("document_id", "unknown")}.pdf',
+            'download_url': f'/downloads/dossier-{current_user.split("@")[0]}.pdf',
             'file_size': '2.5 MB',
             'pages': 4
         }), 200
-        
     except Exception as e:
         return jsonify({'message': 'Download failed', 'error': str(e)}), 500
 
 @bp.route('/share', methods=['POST'])
 @token_required
 def share_dossier(current_user):
-    """Generate shareable link for dossier"""
+    """Generate shareable link for dossier (stub)."""
     try:
-        if current_user not in user_analysis_data:
-            return jsonify({'message': 'No dossier found'}), 404
-        
-        user_data = user_analysis_data[current_user]
-        dossier = user_data.get('dossier', {})
-        
-        if not dossier:
-            return jsonify({'message': 'Dossier must be generated first'}), 400
-        
-        # Generate shareable link (simulated)
-        share_token = f"share-{dossier.get('document_id', 'unknown')}"
+        share_token = f"share-{current_user.split('@')[0]}"
         share_url = f"https://gradalyze.com/shared/{share_token}"
-        
-        return jsonify({
-            'message': 'Share link generated',
-            'share_url': share_url,
-            'expires_in': '30 days',
-            'access_type': 'view_only'
-        }), 200
-        
+        return jsonify({'message': 'Share link generated', 'share_url': share_url, 'expires_in': '30 days', 'access_type': 'view_only'}), 200
     except Exception as e:
         return jsonify({'message': 'Share link generation failed', 'error': str(e)}), 500
 
 @bp.route('/preview', methods=['GET'])
 @token_required
 def preview_dossier(current_user):
-    """Get dossier preview data"""
+    """Get dossier preview data by reading Supabase user record."""
     try:
-        if current_user not in user_analysis_data:
-            return jsonify({'message': 'No analysis data found'}), 404
-        
-        user_data = user_analysis_data[current_user]
-        
-        # Return preview data or full dossier if available
-        if 'dossier' in user_data:
-            return jsonify({
-                'message': 'Dossier preview',
-                'dossier': user_data['dossier']
-            }), 200
+        supabase = get_supabase_client()
+        res = supabase.table('users').select('email, tor_notes, primary_archetype').eq('email', current_user).limit(1).execute()
+        if not res.data:
+            return jsonify({'message': 'User not found'}), 404
+        row = res.data[0]
+        try:
+            notes = json.loads(row.get('tor_notes') or '{}')
+        except Exception:
+            notes = {}
+        analysis_results = notes.get('analysis_results') or {}
+        career_forecast = analysis_results.get('career_forecast') or {}
+        if isinstance(career_forecast, dict):
+            careers_sorted = sorted(career_forecast.items(), key=lambda kv: kv[1], reverse=True)[:2]
+            career_paths = [{'title': k, 'match': round(float(v) * 100) if v <= 1 else round(float(v))} for k, v in careers_sorted]
         else:
-            # Return partial data for preview
-            results = user_data.get('results', {})
-            return jsonify({
-                'message': 'Dossier preview (partial)',
-                'preview': {
-                    'archetype': results.get('archetype', {}),
-                    'academic_metrics': results.get('academic_metrics', {}),
-                    'career_paths': results.get('career_paths', [])[:2],  # Top 2 only
-                    'status': 'preview'
-                }
-            }), 200
-        
+            career_paths = career_forecast if isinstance(career_forecast, list) else []
+        return jsonify({
+            'message': 'Dossier preview',
+            'preview': {
+                'archetype': {'type': row.get('primary_archetype')},
+                'career_paths': career_paths,
+                'status': 'preview'
+            }
+        }), 200
     except Exception as e:
         return jsonify({'message': 'Preview generation failed', 'error': str(e)}), 500
 

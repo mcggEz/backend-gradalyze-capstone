@@ -101,9 +101,5 @@ def main() -> None:
     app = create_app()
     debug_enabled = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     app.run(debug=debug_enabled, host='0.0.0.0', port=5000)
-
-
 if __name__ == '__main__':
     main()
-
-

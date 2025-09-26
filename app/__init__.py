@@ -53,9 +53,7 @@ def create_app():
         return {'status': 'healthy', 'message': 'Gradalyze API is running'}
     
     # Register blueprints
-    from app.routes import auth, analysis, dossier
-    from app.routes import users
-    from app.routes import jobs
+    from app.routes import auth, analysis, dossier, users, jobs
     app.register_blueprint(auth.bp)
     app.register_blueprint(analysis.bp)
     app.register_blueprint(dossier.bp)

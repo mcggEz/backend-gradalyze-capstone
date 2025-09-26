@@ -1,6 +1,8 @@
 from flask import Blueprint, jsonify, request, current_app
 from app.routes.auth import token_required
 from app.services.supabase_client import get_supabase_client
+from app.services.features import build_feature_vector_from_grades
+from app.services.ml_models import predict_career_scores, predict_archetype_kmeans
 import os
 import time
 from datetime import datetime, timezone
@@ -225,7 +227,7 @@ def upload_tor():
         if not file_extension:
             file_extension = '.pdf'
 
-        # For TOR enforce exactly one file per user by using a fixed path and deleting any previous TOR
+        # For TOR enforce exactly one file per user; preserve original filename
         if kind == 'tor':
             # Determine previous TOR path
             try:
@@ -234,8 +236,12 @@ def upload_tor():
             except Exception:
                 prev_path = None
 
-            # Always use a fixed file name to guarantee overwrite
-            object_path = f"{user_id}/transcript{file_extension.lower()}"
+            # Preserve original file name (sanitize)
+            original_base = os.path.basename(filename) if filename else f"tor{file_extension}"
+            safe_name = ''.join(ch if ch.isalnum() or ch in ['.', '-', '_'] else '-' for ch in original_base).strip('-')
+            if not safe_name:
+                safe_name = f"tor{file_extension}"
+            object_path = f"{user_id}/{safe_name}"
 
             # If previous path exists and is different, remove it to keep only one TOR in storage
             if prev_path and prev_path != object_path:
@@ -357,54 +363,18 @@ def upload_tor():
                 'tor_url': public_url,
                 'tor_storage_path': object_path,
                 'tor_notes': None,
-                'tor_uploaded_at': now_iso
+                'tor_uploaded_at': now_iso,
+                # Reset prior analysis so UI doesn't render stale results
+                'primary_archetype': None,
+                'archetype_analyzed_at': None,
+                'archetype_realistic_percentage': None,
+                'archetype_investigative_percentage': None,
+                'archetype_artistic_percentage': None,
+                'archetype_social_percentage': None,
+                'archetype_enterprising_percentage': None,
+                'archetype_conventional_percentage': None,
             }).eq('id', user_id).execute()
-
-            # Auto-analyze the newly uploaded TOR to refresh archetype percentages
-            try:
-                # Download the PDF from storage
-                tor_bucket = os.getenv('SUPABASE_TOR_BUCKET') or os.getenv('SUPABASE_BUCKET') or 'tor'
-                file_bytes = supabase.storage.from_(tor_bucket).download(object_path)
-
-                import io
-                import pdfplumber
-                from app.services.academic_analyzer import AcademicAnalyzer
-
-                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                    pages_text = [page.extract_text() or '' for page in pdf.pages]
-                full_text = '\n'.join(pages_text)
-
-                analyzer = AcademicAnalyzer()
-                academic_analysis = analyzer.analyze_transcript(full_text)
-
-                # Prepare update payload from analysis
-                import json as _json
-                learning_archetype = academic_analysis.get('learning_archetype', {})
-                archetype_percentages = learning_archetype.get('archetype_percentages', {})
-                primary_archetype = learning_archetype.get('primary_archetype', '')
-
-                update_data = {
-                    'tor_notes': _json.dumps(academic_analysis),
-                    'primary_archetype': primary_archetype,
-                    'archetype_analyzed_at': datetime.now(timezone.utc).isoformat()
-                }
-
-                mapping = {
-                    'realistic': 'archetype_realistic_percentage',
-                    'investigative': 'archetype_investigative_percentage',
-                    'artistic': 'archetype_artistic_percentage',
-                    'social': 'archetype_social_percentage',
-                    'enterprising': 'archetype_enterprising_percentage',
-                    'conventional': 'archetype_conventional_percentage'
-                }
-                for k, v in archetype_percentages.items():
-                    if k in mapping:
-                        update_data[mapping[k]] = v
-
-                supabase.table('users').update(update_data).eq('id', user_id).execute()
-                current_app.logger.info('Auto-analysis complete for user %s (id=%s)', email, user_id)
-            except Exception as e:
-                current_app.logger.warning('Auto-analysis failed for user %s: %s', email, e)
+            # NOTE: Analysis is triggered via explicit frontend action.
 
         current_app.logger.info('Uploaded file for user %s (id=%s) to %s (kind=%s)', email, user_id, object_path, kind)
         return jsonify({
@@ -494,29 +464,9 @@ def extract_grades_from_pdf():
         archetype_percentages = learning_archetype.get('archetype_percentages', {})
         primary_archetype = learning_archetype.get('primary_archetype', '')
         
-        # Prepare update data with archetype percentages
-        update_data = {
-            'tor_notes': json.dumps(academic_analysis),
-            'primary_archetype': primary_archetype,
-            'archetype_analyzed_at': datetime.now(timezone.utc).isoformat()
-        }
-        
-        # Add individual archetype percentages
-        archetype_mapping = {
-            'realistic': 'archetype_realistic_percentage',
-            'investigative': 'archetype_investigative_percentage',
-            'artistic': 'archetype_artistic_percentage',
-            'social': 'archetype_social_percentage',
-            'enterprising': 'archetype_enterprising_percentage',
-            'conventional': 'archetype_conventional_percentage'
-        }
-        
-        for archetype_key, percentage in archetype_percentages.items():
-            if archetype_key in archetype_mapping:
-                column_name = archetype_mapping[archetype_key]
-                update_data[column_name] = percentage
-        
-        supabase.table('users').update(update_data).eq('email', email).execute()
+        # IMPORTANT: Do not persist archetype/career results here.
+        # OCR endpoint should only extract grades. Full processing happens
+        # when the user clicks "Process & Analyze".
 
         return jsonify({
             'message': 'Academic analysis complete',
