@@ -64,7 +64,7 @@ def process_analysis_v1():
             'archetype_conventional_percentage': km_perc.get('conventional'),
         }
         supabase.table('users').update(update).eq('id', user['id']).execute()
-
+        
         return jsonify({
             'message': 'Analysis processed',
             'career_forecast': career_scores,
@@ -156,26 +156,44 @@ def process_analysis(current_user):
         # Initialize AcademicAnalyzer
         analyzer = AcademicAnalyzer()
         
-        # SoP 1 / Obj 1: Career Path Forecasting using Linear Regression
-        career_forecast = analyzer.generate_career_recommendations(grades)
+        # SoP 1 / Obj 1: Career Path Forecasting using Random Forest
+        from app.services.ml_models import predict_career_scores_random_forest, predict_archetype_course_based
         
-        # SoP 2 / Obj 2: Student Archetype Classification using K-Means
-        archetype_analysis = analyzer.analyze_transcript(grades)
+        # Get archetype scores first
+        archetype_analysis = predict_archetype_course_based(grades)
+        archetype_scores = archetype_analysis.get('archetype_scores', {})
+        
+        # Predict career scores using Random Forest
+        career_scores = predict_career_scores_random_forest(grades, archetype_scores)
+        
+        # Format career forecast
+        career_forecast = {
+            'career_scores': career_scores,
+            'top_careers': sorted(career_scores.items(), key=lambda x: x[1], reverse=True)[:5],
+            'analysis_method': 'random_forest',
+            'model_confidence': 'high'
+        }
+        
+        # SoP 2 / Obj 2: Student Archetype Classification using K-means clustering (as requested by client)
+        from app.services.ml_models import predict_archetype_kmeans_riasec
+        archetype_analysis = predict_archetype_kmeans_riasec(grades)
         
         # Store results in database
         supabase = get_supabase_client()
         
         # Update user profile with analysis results
+        archetype_scores = archetype_analysis.get('archetype_scores', {})
         update_data = {
             'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
             'primary_archetype': archetype_analysis.get('primary_archetype', 'unknown'),
-            'archetype_realistic_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('realistic', 0.0),
-            'archetype_investigative_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('investigative', 0.0),
-            'archetype_artistic_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('artistic', 0.0),
-            'archetype_social_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('social', 0.0),
-            'archetype_enterprising_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('enterprising', 0.0),
-            'archetype_conventional_percentage': archetype_analysis.get('learning_archetype', {}).get('archetype_percentages', {}).get('conventional', 0.0),
+            'archetype_realistic_percentage': archetype_scores.get('realistic', 0.0),
+            'archetype_investigative_percentage': archetype_scores.get('investigative', 0.0),
+            'archetype_artistic_percentage': archetype_scores.get('artistic', 0.0),
+            'archetype_social_percentage': archetype_scores.get('social', 0.0),
+            'archetype_enterprising_percentage': archetype_scores.get('enterprising', 0.0),
+            'archetype_conventional_percentage': archetype_scores.get('conventional', 0.0),
             'tor_notes': json.dumps({
+                'analysis_results': {
                 'archetype_analysis': archetype_analysis,
                 'career_forecast': career_forecast,
                 'academic_metrics': {
@@ -183,6 +201,7 @@ def process_analysis(current_user):
                     'total_units': sum(g.get('units', 0) for g in grades),
                     'overall_gpa': sum(g.get('grade', 0) for g in grades) / len(grades) if grades else 0,
                     'semester_breakdown': data.get('semester_breakdown', [])
+                    }
                 }
             })
         }
@@ -622,65 +641,3 @@ def get_archetype_based_skills(archetype_percentages):
         {'name': 'Adaptability', 'relevance': 60.0, 'demand': 'Medium'}
     ])
 
-
-@bp.route('/process-v2', methods=['POST'])
-def process_analysis_v2():
-    """Compute Obj1 (career forecast) + Obj2 (archetype) from provided grades and persist to users.
-
-    Body JSON: { email: str, grades: [{ subject, units, grade, semester } ...] }
-    """
-    try:
-        data = request.get_json(silent=True) or {}
-        email = (data.get('email') or '').strip().lower()
-        grades = data.get('grades') or []
-        if not email or not isinstance(grades, list):
-            return jsonify({'message': 'email and grades are required'}), 400
-
-        supabase = get_supabase_client()
-        res_user = supabase.table('users').select('id, tor_notes').eq('email', email).limit(1).execute()
-        if not res_user.data:
-            return jsonify({'message': 'User not found'}), 404
-        user = res_user.data[0]
-
-        # Build features and run models
-        from app.services.features import build_feature_vector_from_grades
-        from app.services.ml_models import predict_career_scores, predict_archetype_kmeans
-        vec = build_feature_vector_from_grades(grades)
-        career_scores = predict_career_scores(vec)
-        cluster_id, km_perc = predict_archetype_kmeans(vec)
-
-        import json as _json
-        try:
-            notes = _json.loads(user.get('tor_notes') or '{}')
-        except Exception:
-            notes = {}
-        ar = notes.get('analysis_results') or {}
-        ar['career_forecast'] = career_scores
-        notes['analysis_results'] = ar
-        notes['grades'] = grades
-
-        from datetime import datetime, timezone
-        update = {
-            'tor_notes': _json.dumps(notes),
-            'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
-            'primary_archetype': max(km_perc, key=km_perc.get) if km_perc else None,
-            'archetype_realistic_percentage': km_perc.get('realistic'),
-            'archetype_investigative_percentage': km_perc.get('investigative'),
-            'archetype_artistic_percentage': km_perc.get('artistic'),
-            'archetype_social_percentage': km_perc.get('social'),
-            'archetype_enterprising_percentage': km_perc.get('enterprising'),
-            'archetype_conventional_percentage': km_perc.get('conventional'),
-        }
-        supabase.table('users').update(update).eq('id', user['id']).execute()
-
-        return jsonify({
-            'message': 'Analysis processed',
-            'career_forecast': career_scores,
-            'archetype': {
-                'primary': update.get('primary_archetype'),
-                'percentages': km_perc,
-                'cluster_id': cluster_id
-            }
-        }), 200
-    except Exception as e:
-        return jsonify({'message': 'Process analysis failed', 'error': str(e)}), 500

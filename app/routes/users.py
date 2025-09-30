@@ -486,35 +486,6 @@ def extract_grades_from_pdf():
         return jsonify({'message': 'Analysis failed', 'error': str(error)}), 500
 
 
-@bp.route("/job-matches/<email>", methods=["GET"])
-def get_job_matches(email):
-    """Get personalized job matches for a user based on their academic profile.
-    
-    Path parameter:
-      - email: user's email address
-      
-    Query parameters:
-      - limit: number of matches to return (default: 10)
-    """
-    try:
-        email = email.strip().lower()
-        limit = int(request.args.get('limit', 10))
-        
-        from app.services.job_matcher import JobMatcher
-        matcher = JobMatcher()
-        
-        job_matches = matcher.match_jobs_for_user(email, limit)
-        
-        if 'error' in job_matches:
-            return jsonify({'message': job_matches['error']}), 404
-        
-        return jsonify(job_matches), 200
-        
-    except Exception as error:
-        current_app.logger.exception('Job matching failed: %s', error)
-        return jsonify({'message': 'Job matching failed', 'error': str(error)}), 500
-
-
 @bp.route("/profile-summary/<email>", methods=["GET"])
 def get_profile_summary(email):
     """Get a summary of user's academic profile and career recommendations.
@@ -525,22 +496,38 @@ def get_profile_summary(email):
     try:
         email = email.strip().lower()
         
-        from app.services.job_matcher import JobMatcher
-        matcher = JobMatcher()
+        supabase = get_supabase_client()
         
-        user_profile = matcher.get_user_academic_profile(email)
-        if not user_profile:
+        # Get user data
+        user_result = supabase.table("users").select(
+            "primary_archetype, archetype_realistic_percentage, archetype_investigative_percentage, "
+            "archetype_artistic_percentage, archetype_social_percentage, archetype_enterprising_percentage, "
+            "archetype_conventional_percentage, tor_notes"
+        ).eq("email", email).execute()
+        
+        if not user_result.data:
             return jsonify({'message': 'User profile not found'}), 404
         
-        profile_summary = matcher.get_profile_summary(user_profile)
-        academic_analysis = user_profile['academic_analysis']
+        user = user_result.data[0]
+        
+        # Get archetype percentages
+        archetype_percentages = {
+            'realistic': user.get('archetype_realistic_percentage', 0.0),
+            'investigative': user.get('archetype_investigative_percentage', 0.0),
+            'artistic': user.get('archetype_artistic_percentage', 0.0),
+            'social': user.get('archetype_social_percentage', 0.0),
+            'enterprising': user.get('archetype_enterprising_percentage', 0.0),
+            'conventional': user.get('archetype_conventional_percentage', 0.0)
+        }
+        
+        # Get TOR notes for career forecast
+        tor_notes = user.get('tor_notes', {})
+        career_forecast = tor_notes.get('analysis_results', {}).get('career_forecast', {})
         
         return jsonify({
-            'profile_summary': profile_summary,
-            'learning_archetype': academic_analysis.get('learning_archetype', {}),
-            'academic_metrics': academic_analysis.get('academic_metrics', {}),
-            'career_recommendations': academic_analysis.get('career_recommendations', []),
-            'skills': academic_analysis.get('skills', [])
+            'primary_archetype': user.get('primary_archetype', ''),
+            'archetype_percentages': archetype_percentages,
+            'career_forecast': career_forecast
         }), 200
         
     except Exception as error:
