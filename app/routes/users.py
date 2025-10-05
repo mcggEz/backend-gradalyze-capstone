@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, current_app
 from app.routes.auth import token_required
 from app.services.supabase_client import get_supabase_client
-from app.services.features import build_feature_vector_from_grades
+from app.services.ml_models import build_feature_vector_from_grades
 from app.services.ml_models import predict_career_scores, predict_archetype_kmeans
 import os
 import time
@@ -468,17 +468,78 @@ def extract_grades_from_pdf():
         # OCR endpoint should only extract grades. Full processing happens
         # when the user clicks "Process & Analyze".
 
+        # Return only numeric grades array
+        def _to_numeric_grades(raw_list):
+            def to_float(v):
+                if v is None:
+                    return None
+                if isinstance(v, (int, float)):
+                    return float(v)
+                if isinstance(v, str):
+                    try:
+                        return float(v.strip())
+                    except Exception:
+                        return None
+                return None
+
+            def is_quarter_grade(x: float) -> bool:
+                if x is None:
+                    return False
+                if x < 1.0 or x > 3.0:
+                    return False
+                q = round((x - 1.0) * 4)
+                return abs(x - (1.0 + q / 4.0)) < 1e-6
+
+            nums = []
+            if not isinstance(raw_list, list):
+                return nums
+            for g in raw_list:
+                try:
+                    if not isinstance(g, dict):
+                        val = to_float(g)
+                        if val is not None:
+                            nums.append(round(val, 2))
+                        continue
+
+                    candidates = []
+                    for key in ('grade', 'final_grade', 'final', 'rating', 'score'):
+                        candidates.append(to_float(g.get(key)))
+                    # Prefer proper quarter-step grade between 1.00 and 3.00
+                    grade_val = next((x for x in candidates if x is not None and is_quarter_grade(x)), None)
+
+                    # Avoid confusing units (1,2,3) as grade when no decimal present
+                    units_val = to_float(g.get('units'))
+                    if (grade_val is None or (grade_val in (1.0, 2.0, 3.0))) and units_val in (1.0, 2.0, 3.0):
+                        # If there is a text field containing a decimal like 1.25/1.50/2.75, extract that
+                        txt_fields = [str(g.get(k) or '') for k in ('raw', 'line', 'subject', 'title')]
+                        import re as _re
+                        m = _re.findall(r"(?:(?<!\d)(?:1|2|3))(?:\.00|\.25|\.50|\.75)", ' '.join(txt_fields))
+                        if m:
+                            try:
+                                grade_val = float(m[0])
+                            except Exception:
+                                pass
+
+                    if grade_val is None:
+                        # Fallback: use any numeric that looks like a grade and not the units
+                        for x in candidates:
+                            if x is not None and is_quarter_grade(x):
+                                grade_val = x
+                                break
+
+                    if grade_val is not None:
+                        nums.append(round(float(grade_val), 2))
+                except Exception:
+                    continue
+            return nums
+
+        numeric_grades = _to_numeric_grades(academic_analysis.get('grades', []))
+
+        # Do NOT synthesize or override with derived data; return only what analyzer extracted
+
         return jsonify({
             'message': 'Academic analysis complete',
-            'analysis': academic_analysis,
-            'text': full_text,
-            'grades': academic_analysis.get('grades', []),
-            'extracted_text_length': len(full_text),
-            'debug_info': {
-                'text_preview': full_text[:200] + '...' if len(full_text) > 200 else full_text,
-                'grades_count': len(academic_analysis.get('grades', [])),
-                'has_grades': bool(academic_analysis.get('grades'))
-            }
+            'grades': numeric_grades
         }), 200
         
     except Exception as error:

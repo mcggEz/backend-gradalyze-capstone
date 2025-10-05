@@ -5,7 +5,7 @@ Analysis routes for academic processing and archetype computation
 from flask import Blueprint, request, jsonify
 from app.routes.auth import token_required
 from app.services.supabase_client import get_supabase_client
-from app.services.features import build_feature_vector_from_grades
+from app.services.ml_models import build_feature_vector_from_grades
 from app.services.ml_models import predict_career_scores, predict_archetype_kmeans
 import json
 import re
@@ -36,10 +36,64 @@ def process_analysis_v1():
             return jsonify({'message': 'User not found'}), 404
         user = res_user.data[0]
 
-        # Build features and run models
-        vec = build_feature_vector_from_grades(grades)
-        career_scores = predict_career_scores(vec)
-        cluster_id, km_perc = predict_archetype_kmeans(vec)
+        # Normalize and persist grades to dedicated table aligned with frontend
+        try:
+            pattern = re.compile(r'^([A-Z]{2,4}\s+\d{4}(?:\.\d+[A-Z]?)?)\s*(.*)$')
+            normalized_rows = []
+            for g in grades:
+                subject = (g.get('subject') or '').strip()
+                match = pattern.match(subject)
+                course_code = match.group(1) if match else None
+                title = (match.group(2) or subject).strip() if match else subject
+                units_raw = g.get('units')
+                grade_raw = g.get('grade')
+                try:
+                    units_val = round(float(units_raw), 2) if units_raw is not None else 0.0
+                except Exception:
+                    units_val = 0.0
+                try:
+                    grade_val = round(float(grade_raw), 2) if grade_raw is not None else 0.0
+                except Exception:
+                    grade_val = 0.0
+                normalized_rows.append({
+                    'user_id': user['id'],
+                    'course_code': course_code,
+                    'title': title,
+                    'units': units_val,
+                    'grade': grade_val,
+                    'semester': (g.get('semester') or 'N/A').strip()
+                })
+
+            if normalized_rows:
+                # Upsert to avoid duplicates per user/course_code/semester
+                supabase.table('user_grades').upsert(normalized_rows, on_conflict='user_id,course_code,semester').execute()
+            # Also snapshot raw grades array into users.grades for quick retrieval/editing in UI
+            supabase.table('users').update({'grades': grades}).eq('id', user['id']).execute()
+        except Exception:
+            # Do not block analysis if persistence fails
+            pass
+
+        # Build features and run models (program-aware)
+        course_raw = (user.get('course') or '').lower()
+        program = 'it' if 'information technology' in course_raw else ('cs' if 'computer science' in course_raw else 'generic')
+
+        if program == 'it':
+            from app.services.ml_models import build_feature_vector_from_grades_it
+            vec = build_feature_vector_from_grades_it(grades)
+            from app.services.ml_models import predict_career_scores_it
+            career_scores = predict_career_scores_it(vec)
+            # Keep kmeans fallback for archetype percentages (stored in columns)
+            cluster_id, km_perc = predict_archetype_kmeans(vec)
+        elif program == 'cs':
+            from app.services.ml_models import build_feature_vector_from_grades_cs
+            vec = build_feature_vector_from_grades_cs(grades)
+            from app.services.ml_models import predict_career_scores_cs
+            career_scores = predict_career_scores_cs(vec)
+            cluster_id, km_perc = predict_archetype_kmeans(vec)
+        else:
+            vec = build_feature_vector_from_grades(grades)
+            career_scores = predict_career_scores(vec)
+            cluster_id, km_perc = predict_archetype_kmeans(vec)
 
         import json as _json
         try:
@@ -139,262 +193,57 @@ def save_existing_results():
     except Exception as e:
         return jsonify({'message': 'Failed to save results', 'error': str(e)}), 500
 
+# New: Clear analysis results (career forecast + archetype fields) for a user
+@bp.route('/clear-results', methods=['POST'])
+def clear_results():
+    try:
+        data = request.get_json(silent=True) or {}
+        email = (data.get('email') or '').strip().lower()
+        if not email:
+            return jsonify({'message': 'email is required'}), 400
+
+        supabase = get_supabase_client()
+        # Fetch user to get current tor_notes
+        res = supabase.table('users').select('id, tor_notes').eq('email', email).limit(1).execute()
+        if not res.data:
+            return jsonify({'message': 'User not found'}), 404
+        user = res.data[0]
+
+        # Remove analysis data from tor_notes if present
+        try:
+            notes = json.loads(user.get('tor_notes') or '{}')
+            if isinstance(notes, dict):
+                if 'analysis_results' in notes:
+                    del notes['analysis_results']
+                # Optionally clear grades snapshot saved there
+                if 'grades' in notes:
+                    del notes['grades']
+            tor_notes_str = json.dumps(notes)
+        except Exception:
+            tor_notes_str = '{}'  # fallback
+
+        update = {
+            'primary_archetype': None,
+            'archetype_realistic_percentage': None,
+            'archetype_investigative_percentage': None,
+            'archetype_artistic_percentage': None,
+            'archetype_social_percentage': None,
+            'archetype_enterprising_percentage': None,
+            'archetype_conventional_percentage': None,
+            'tor_notes': tor_notes_str,
+        }
+
+        supabase.table('users').update(update).eq('id', user['id']).execute()
+
+        return jsonify({'message': 'Analysis results cleared'}), 200
+    except Exception as e:
+        return jsonify({'message': 'Failed to clear results', 'error': str(e)}), 500
+
 ## Removed legacy in-memory /results endpoint
 
-@bp.route('/process-analysis', methods=['POST'])
-@token_required
-def process_analysis(current_user):
-    """Process analysis using SoP objectives: Career Path Forecasting and Archetype Classification"""
-    try:
-        data = request.get_json()
-        grades = data.get('grades', [])
-        email = data.get('email', '')
-        
-        if not grades:
-            return jsonify({'message': 'No grades provided for analysis'}), 400
-        
-        # Initialize AcademicAnalyzer
-        analyzer = AcademicAnalyzer()
-        
-        # SoP 1 / Obj 1: Career Path Forecasting using Random Forest
-        from app.services.ml_models import predict_career_scores_random_forest, predict_archetype_course_based
-        
-        # Get archetype scores first
-        archetype_analysis = predict_archetype_course_based(grades)
-        archetype_scores = archetype_analysis.get('archetype_scores', {})
-        
-        # Predict career scores using Random Forest
-        career_scores = predict_career_scores_random_forest(grades, archetype_scores)
-        
-        # Format career forecast
-        career_forecast = {
-            'career_scores': career_scores,
-            'top_careers': sorted(career_scores.items(), key=lambda x: x[1], reverse=True)[:5],
-            'analysis_method': 'random_forest',
-            'model_confidence': 'high'
-        }
-        
-        # SoP 2 / Obj 2: Student Archetype Classification using K-means clustering (as requested by client)
-        from app.services.ml_models import predict_archetype_kmeans_riasec
-        archetype_analysis = predict_archetype_kmeans_riasec(grades)
-        
-        # Store results in database
-        supabase = get_supabase_client()
-        
-        # Update user profile with analysis results
-        archetype_scores = archetype_analysis.get('archetype_scores', {})
-        update_data = {
-            'archetype_analyzed_at': datetime.now(timezone.utc).isoformat(),
-            'primary_archetype': archetype_analysis.get('primary_archetype', 'unknown'),
-            'archetype_realistic_percentage': archetype_scores.get('realistic', 0.0),
-            'archetype_investigative_percentage': archetype_scores.get('investigative', 0.0),
-            'archetype_artistic_percentage': archetype_scores.get('artistic', 0.0),
-            'archetype_social_percentage': archetype_scores.get('social', 0.0),
-            'archetype_enterprising_percentage': archetype_scores.get('enterprising', 0.0),
-            'archetype_conventional_percentage': archetype_scores.get('conventional', 0.0),
-            'tor_notes': json.dumps({
-                'analysis_results': {
-                'archetype_analysis': archetype_analysis,
-                'career_forecast': career_forecast,
-                'academic_metrics': {
-                    'total_subjects': len(grades),
-                    'total_units': sum(g.get('units', 0) for g in grades),
-                    'overall_gpa': sum(g.get('grade', 0) for g in grades) / len(grades) if grades else 0,
-                    'semester_breakdown': data.get('semester_breakdown', [])
-                    }
-                }
-            })
-        }
-        
-        # Update user record
-        supabase.table('users').update(update_data).eq('email', email).execute()
-        
-        return jsonify({
-            'message': 'Analysis processing completed successfully',
-            'results': {
-                'archetype_analysis': archetype_analysis,
-                'career_forecast': career_forecast,
-                'sop_objectives': {
-                    'sop1_obj1': {
-                        'name': 'Career Path Forecasting',
-                        'theory': 'Predictive analytics in career guidance',
-                        'method': 'Linear Regression applied to academic subject grades',
-                        'tool': 'Scikit-learn regression models',
-                        'status': 'completed'
-                    },
-                    'sop2_obj2': {
-                        'name': 'Student Archetype Classification',
-                        'theory': 'Educational psychology and career archetypes',
-                        'method': 'K-Means Clustering based on subject-specific grades',
-                        'tool': 'Scikit-learn clustering module',
-                        'status': 'completed'
-                    }
-                }
-            }
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'message': 'Analysis processing failed', 'error': str(e)}), 500
+## Removed legacy route /process-analysis; use /api/analysis/process instead
 
-@bp.route("/recommended-skills", methods=["GET"])
-def get_recommended_skills():
-    """Get personalized skill recommendations based on user's archetype and job market"""
-    try:
-        email = request.args.get('email')
-        if not email:
-            return jsonify({"error": "Email parameter required"}), 400
-        
-        supabase = get_supabase_client()
-        
-        # Get user's archetype data
-        user_result = supabase.table("users").select(
-            "primary_archetype, archetype_realistic_percentage, archetype_investigative_percentage, "
-            "archetype_artistic_percentage, archetype_social_percentage, archetype_enterprising_percentage, "
-            "archetype_conventional_percentage, tor_notes"
-        ).eq("email", email).execute()
-        
-        if not user_result.data:
-            return jsonify({"error": "User not found"}), 404
-        
-        user = user_result.data[0]
-        
-        # Get archetype percentages
-        archetype_percentages = {
-            'realistic': user.get('archetype_realistic_percentage', 0.0),
-            'investigative': user.get('archetype_investigative_percentage', 0.0),
-            'artistic': user.get('archetype_artistic_percentage', 0.0),
-            'social': user.get('archetype_social_percentage', 0.0),
-            'enterprising': user.get('archetype_enterprising_percentage', 0.0),
-            'conventional': user.get('archetype_conventional_percentage', 0.0)
-        }
-        
-        # Get relevant jobs based on archetype
-        jobs_result = supabase.table("jobs").select("*").execute()
-        relevant_jobs = []
-        
-        # Filter jobs based on user's top archetypes
-        top_archetypes = sorted(archetype_percentages.items(), key=lambda x: x[1], reverse=True)[:3]
-        
-        for archetype, percentage in top_archetypes:
-            if percentage > 10:  # Only consider archetypes with >10% match
-                # Filter jobs that match the archetype's typical roles
-                archetype_keywords = get_archetype_keywords(archetype)
-                for job in jobs_result.data:
-                    if any(keyword.lower() in job.get('title', '').lower() or 
-                           keyword.lower() in job.get('description', '').lower() 
-                           for keyword in archetype_keywords):
-                        relevant_jobs.append(job)
-        
-        # Extract skills from job descriptions
-        all_skills = []
-        for job in relevant_jobs:
-            description = job.get('description', '')
-            skills = extract_skills_from_text(description)
-            all_skills.extend(skills)
-        
-        # Count and rank skills
-        skill_counts = Counter(all_skills)
-        
-        # Get top skills with relevance scores
-        top_skills = []
-        for skill, count in skill_counts.most_common(8):
-            relevance_score = min(100, (count / len(relevant_jobs)) * 100 + 10)
-            top_skills.append({
-                "name": skill,
-                "relevance": round(relevance_score, 1),
-                "demand": "High" if relevance_score > 70 else "Medium" if relevance_score > 40 else "Low"
-            })
-        
-        # If no relevant skills found, provide archetype-based recommendations
-        if not top_skills:
-            top_skills = get_archetype_based_skills(archetype_percentages)
-        
-        return jsonify({
-            "skills": top_skills[:4],  # Return top 4 skills
-            "user_archetype": user.get('primary_archetype'),
-            "total_relevant_jobs": len(relevant_jobs)
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/companies-for-user", methods=["GET"])
-def get_companies_for_user():
-    """Get companies hiring for roles relevant to user's archetype"""
-    try:
-        email = request.args.get('email')
-        if not email:
-            return jsonify({"error": "Email parameter required"}), 400
-        
-        supabase = get_supabase_client()
-        
-        # Get user's archetype data
-        user_result = supabase.table("users").select(
-            "primary_archetype, archetype_realistic_percentage, archetype_investigative_percentage, "
-            "archetype_artistic_percentage, archetype_social_percentage, archetype_enterprising_percentage, "
-            "archetype_conventional_percentage"
-        ).eq("email", email).execute()
-        
-        if not user_result.data:
-            return jsonify({"error": "User not found"}), 404
-        
-        user = user_result.data[0]
-        
-        # Get archetype percentages
-        archetype_percentages = {
-            'realistic': user.get('archetype_realistic_percentage', 0.0),
-            'investigative': user.get('archetype_investigative_percentage', 0.0),
-            'artistic': user.get('archetype_artistic_percentage', 0.0),
-            'social': user.get('archetype_social_percentage', 0.0),
-            'enterprising': user.get('archetype_enterprising_percentage', 0.0),
-            'conventional': user.get('archetype_conventional_percentage', 0.0)
-        }
-        
-        # Get all jobs
-        jobs_result = supabase.table("jobs").select("*").execute()
-        
-        # Filter relevant jobs based on archetype
-        relevant_jobs = []
-        top_archetypes = sorted(archetype_percentages.items(), key=lambda x: x[1], reverse=True)[:3]
-        
-        for archetype, percentage in top_archetypes:
-            if percentage > 10:
-                archetype_keywords = get_archetype_keywords(archetype)
-                for job in jobs_result.data:
-                    if any(keyword.lower() in job.get('title', '').lower() or 
-                           keyword.lower() in job.get('description', '').lower() 
-                           for keyword in archetype_keywords):
-                        relevant_jobs.append(job)
-        
-        # Group jobs by company
-        company_jobs = {}
-        for job in relevant_jobs:
-            company = job.get('company', 'Unknown Company')
-            if company not in company_jobs:
-                company_jobs[company] = []
-            company_jobs[company].append(job)
-        
-        # Create company list with job counts
-        companies = []
-        for company, jobs in company_jobs.items():
-            companies.append({
-                "name": company,
-                "job_count": len(jobs),
-                "latest_job": max(jobs, key=lambda x: x.get('posted_at', '')) if jobs else None
-            })
-        
-        # Sort by job count and take top 3
-        companies.sort(key=lambda x: x['job_count'], reverse=True)
-        top_companies = companies[:3]
-        
-        return jsonify({
-            "companies": top_companies,
-            "user_archetype": user.get('primary_archetype'),
-            "total_relevant_jobs": len(relevant_jobs)
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+## Removed overlapping recommendation endpoints; use routes/recommendations.py instead
 
 @bp.route('/seed-jobs', methods=['POST'])
 def seed_jobs():

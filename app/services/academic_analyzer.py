@@ -106,7 +106,7 @@ class AcademicAnalyzer:
         }
     
     def extract_grades_and_subjects(self, text: str) -> List[Dict[str, Any]]:
-        """Extract grades and subjects from transcript text"""
+        """Extract grades and subjects from transcript text - Enhanced for PLM TOR format"""
         subjects = []
         seen_subjects = set()  # Track seen subjects to avoid duplicates
         
@@ -114,18 +114,18 @@ class AcademicAnalyzer:
         semester_sections = self.split_text_by_semesters(text)
         
         for section_text, semester in semester_sections:
-            # Enhanced grade patterns for better extraction (prioritized)
+            # Enhanced patterns specifically for PLM TOR format
             grade_patterns = [
-                # Pattern 1: Course Code + Course Title + Units + Grade (TOR format) - HIGHEST PRIORITY
-                # e.g., "STS 0002 Science, Technology and Society 3 2.00"
-                # More specific pattern to avoid capturing wrong data
-                (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'course_code_title'),
-                # Pattern 2: Course Code + Course Title + Units + Grade (alternative spacing)
-                (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{1,2})', 'course_code_title'),
-                # Pattern 3: Course Code + Course Title + Units + Grade (without course code format)
-                (r'([A-Z]{2,4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'course_code_title'),
-                # Pattern 4: Simple course code + title + units + grade (for simpler formats)
-                (r'([A-Z]{2,4})\s+([A-Za-z\s,]+?)\s+(\d{1,2})\s+(\d+\.\d{1,2})', 'course_code_title'),
+                # A) Course code + title + UNITS + GRADE
+                (r'([A-Z]{2,4}\s+\d{4}(?:\.\d+[A-Z]?)?)\s+([A-Za-z\s,()]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'units_then_grade'),
+                (r'([A-Z]{2,4}\s+\d{4}\.\d+[A-Z]?)\s+([A-Za-z\s,()]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'units_then_grade'),
+                (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,()]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'units_then_grade'),
+                (r'([A-Z]{2,4}\s+\d{4}\.\d+[A-Z])\s+([A-Za-z\s,()]+?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'units_then_grade'),
+                # B) Course code + title + GRADE + UNITS (PLM TOR layout)
+                (r'([A-Z]{2,4}\s+\d{4}(?:\.\d+[A-Z]?)?)\s+([A-Za-z\s,()]+?)\s+(\d+\.\d{2})\s+(\d{1,2})', 'grade_then_units'),
+                (r'([A-Z]{2,4}\s+\d{4}\.\d+[A-Z]?)\s+([A-Za-z\s,()]+?)\s+(\d+\.\d{2})\s+(\d{1,2})', 'grade_then_units'),
+                (r'([A-Z]{2,4}\s+\d{4})\s+([A-Za-z\s,()]+?)\s+(\d+\.\d{2})\s+(\d{1,2})', 'grade_then_units'),
+                (r'([A-Z]{2,4}\s+\d{4}\.\d+[A-Z])\s+([A-Za-z\s,()]+?)\s+(\d+\.\d{2})\s+(\d{1,2})', 'grade_then_units'),
             ]
             
             # Process patterns in order (most specific first)
@@ -133,57 +133,54 @@ class AcademicAnalyzer:
                 matches = re.findall(pattern, section_text, re.IGNORECASE)
                 for match in matches:
                     if len(match) == 4:
-                        course_code, course_title, units, grade = match
+                        if pattern_type == 'units_then_grade':
+                            course_code, course_title, units, grade = match
+                        else:  # grade_then_units
+                            course_code, course_title, grade, units = match
                         
                         # Clean and validate the data
                         course_code = course_code.strip()
                         course_title = course_title.strip()
                         
-                        # Skip invalid course codes (like "COURSE CODE COURSE TITLE UNITS GRADE STS")
-                        if (len(course_code) > 10 or 
-                            'COURSE' in course_code.upper() or 
-                            'CODE' in course_code.upper() or
-                            'TITLE' in course_code.upper() or
-                            'UNITS' in course_code.upper() or
-                            'GRADE' in course_code.upper() or
-                            course_code.strip() in ['ICC', 'CET', 'EIT', 'ENS', 'CAP']):  # Skip these invalid codes
-                            continue
-                        
-                        # Clean course title (fix OCR typos)
-                        course_title = self.clean_course_title(course_title)
-                        
-                        subject_key = f"{course_code}-{course_title}"
-                        
-                        # Skip if we've already seen this subject
-                        if subject_key in seen_subjects:
-                            continue
-                        
-                        # Validate units and grade
-                        units_num = self.parse_units(units)
-                        grade_num = self.normalize_grade(grade)
-                        
-                        # More strict validation
-                        if (units_num > 10 or units_num < 1 or 
-                            grade_num > 5.0 or grade_num < 0 or
-                            units_num == 0 or grade_num == 0):
-                            continue
-                        
-                        seen_subjects.add(subject_key)
-                        subjects.append({
-                            'subject': f"{course_code} - {course_title}",
-                            'units': units_num,
-                            'grade': grade_num,
-                            'semester': semester,
-                            'category': 'General'
-                        })
+                        # Enhanced validation for PLM format
+                        if self.is_valid_plm_course_code(course_code):
+                            # Clean course title (fix OCR typos and remove extra spaces)
+                            course_title = self.clean_course_title(course_title)
+                            
+                            # Create unique subject key
+                            subject_key = f"{course_code}-{course_title}-{semester}"
+                            
+                            # Skip if we've already seen this subject
+                            if subject_key in seen_subjects:
+                                continue
+                            
+                            # Validate units and grade
+                            units_num = self.parse_units(units)
+                            grade_num = self.normalize_grade(grade)
+                            
+                            # Enhanced validation for PLM format
+                            if self.is_valid_grade_data(units_num, grade_num):
+                                seen_subjects.add(subject_key)
+                                
+                                # Determine course category based on course code
+                                category = self.categorize_plm_course(course_code)
+                                
+                                subjects.append({
+                                    'subject': f"{course_code} - {course_title}",
+                                    'course_code': course_code,
+                                    'units': units_num,
+                                    'grade': grade_num,
+                                    'semester': semester,
+                                    'category': category
+                                })
             
-            # Only use fallback patterns if we didn't find any course code patterns
-            if not any('course_code_title' in str(subject) for subject in subjects if subject.get('semester') == semester):
+            # Fallback patterns for non-standard formats
+            if not any(subject.get('semester') == semester for subject in subjects):
                 fallback_patterns = [
-                    # Pattern 3: Subject Units Grade (fallback for other formats)
-                    (r'([A-Z][a-zA-Z\s&]+(?:I{1,3}|IV|V)?)\s+(\d+(?:\.\d+)?)\s+([A-F][+-]?|\d+(?:\.\d+)?)', 'fallback'),
-                    # Pattern 4: Subject Grade (fallback)
-                    (r'([A-Z][a-zA-Z\s&]+(?:I{1,3}|IV|V)?)\s+([A-F][+-]?|\d+(?:\.\d+)?)', 'fallback'),
+                    # Pattern: Subject Name + Units + Grade
+                    (r'([A-Z][a-zA-Z\s&()]+(?:I{1,3}|IV|V)?)\s+(\d{1,2})\s+(\d+\.\d{2})', 'fallback_format'),
+                    # Pattern: Subject Name + Grade (assume 3 units)
+                    (r'([A-Z][a-zA-Z\s&()]+(?:I{1,3}|IV|V)?)\s+(\d+\.\d{2})', 'fallback_format'),
                 ]
                 
                 for pattern, pattern_type in fallback_patterns:
@@ -199,6 +196,7 @@ class AcademicAnalyzer:
                             seen_subjects.add(subject_key)
                             subjects.append({
                                 'subject': subject_name.strip(),
+                                'course_code': 'N/A',
                                 'units': self.parse_units(units),
                                 'grade': self.normalize_grade(grade),
                                 'semester': semester,
@@ -214,27 +212,41 @@ class AcademicAnalyzer:
                             seen_subjects.add(subject_key)
                             subjects.append({
                                 'subject': subject_name.strip(),
+                                'course_code': 'N/A',
                                 'units': 3,  # Default units
                                 'grade': self.normalize_grade(grade),
                                 'semester': semester,
                                 'category': 'General'
                             })
         
-        # If no structured data found, create sample data for demonstration
-        if not subjects:
-            subjects = self.create_sample_academic_data()
+        # Do not fabricate data; return empty if nothing parsed
         
         return subjects
     
     def split_text_by_semesters(self, text: str) -> List[Tuple[str, str]]:
-        """Split text into sections based on semester headers"""
+        """Split text into sections based on semester headers - Enhanced for PLM format"""
         sections = []
         
-        # Pattern to match semester headers
-        semester_pattern = r'(First|Second|Third|Fourth)\s+(Year|Semester).*?(First|Second|Third|Fourth)?\s*(Year|Semester)?'
+        # Enhanced patterns for PLM TOR semester headers
+        semester_patterns = [
+            # Pattern 1: "1st Semester, 2020-2021", "2nd Semester, 2021-2022"
+            r'(\d+(?:st|nd|rd|th)\s+Semester,\s+\d{4}-\d{4})',
+            # Pattern 2: "First Semester, 2020-2021", "Second Semester, 2021-2022"
+            r'(First|Second|Third|Fourth)\s+Semester,\s+\d{4}-\d{4}',
+            # Pattern 3: "MidYear Term, 2022-2023"
+            r'(MidYear\s+Term,\s+\d{4}-\d{4})',
+            # Pattern 4: Legacy format "First Year, First Semester"
+            r'(First|Second|Third|Fourth)\s+(Year|Semester).*?(First|Second|Third|Fourth)?\s*(Year|Semester)?'
+        ]
         
-        # Find all semester headers
-        semester_matches = list(re.finditer(semester_pattern, text, re.IGNORECASE))
+        # Find all semester headers using multiple patterns
+        semester_matches = []
+        for pattern in semester_patterns:
+            matches = list(re.finditer(pattern, text, re.IGNORECASE))
+            semester_matches.extend(matches)
+        
+        # Sort matches by position
+        semester_matches.sort(key=lambda x: x.start())
         
         if not semester_matches:
             # If no semester headers found, treat entire text as one section
@@ -261,34 +273,14 @@ class AcademicAnalyzer:
             if semester_matches:
                 last_match = semester_matches[-1]
                 last_section_text = text[last_match.end():].strip()
-                if last_section_text:
+                if last_section_text and len(last_section_text) > 50:
                     sections.append((last_section_text, semester_matches[-1].group(0).strip()))
         
         return sections
     
     def create_sample_academic_data(self) -> List[Dict[str, Any]]:
-        """Create sample academic data for demonstration"""
-        return [
-            # First Year, First Semester
-            {'subject': 'STS 0002 - Science, Technology and Society', 'units': 3, 'grade': 2.0, 'semester': 'First Year, First Semester', 'category': 'General'},
-            {'subject': 'AAP 0007 - Art Appreciation', 'units': 3, 'grade': 1.75, 'semester': 'First Year, First Semester', 'category': 'General'},
-            {'subject': 'PCM 0006 - Purposive Communication', 'units': 3, 'grade': 2.25, 'semester': 'First Year, First Semester', 'category': 'General'},
-            {'subject': 'MMW 0001 - Mathematics in the Modern World', 'units': 3, 'grade': 2.5, 'semester': 'First Year, First Semester', 'category': 'General'},
-            {'subject': 'ICC 0101 - Introduction to Computing', 'units': 3, 'grade': 2.0, 'semester': 'First Year, First Semester', 'category': 'Major'},
-            {'subject': 'ICC 0102 - Fundamentals of Programming', 'units': 3, 'grade': 2.25, 'semester': 'First Year, First Semester', 'category': 'Major'},
-            
-            # First Year, Second Semester
-            {'subject': 'CET 0111 - Calculus 1', 'units': 3, 'grade': 2.5, 'semester': 'First Year, Second Semester', 'category': 'Major'},
-            {'subject': 'CET 0114 - General Chemistry', 'units': 4, 'grade': 2.75, 'semester': 'First Year, Second Semester', 'category': 'Major'},
-            {'subject': 'EIT 0121 - Intro to Human Computer Interaction', 'units': 3, 'grade': 2.0, 'semester': 'First Year, Second Semester', 'category': 'Major'},
-            {'subject': 'ICC 0103 - Intermediate Programming', 'units': 3, 'grade': 2.5, 'semester': 'First Year, Second Semester', 'category': 'Major'},
-            
-            # Second Year, First Semester
-            {'subject': 'CET 0121 - Calculus 2', 'units': 3, 'grade': 2.25, 'semester': 'Second Year, First Semester', 'category': 'Major'},
-            {'subject': 'CET 0225 - Physics for IT', 'units': 4, 'grade': 2.5, 'semester': 'Second Year, First Semester', 'category': 'Major'},
-            {'subject': 'TCW 0005 - The Contemporary World', 'units': 3, 'grade': 2.0, 'semester': 'Second Year, First Semester', 'category': 'General'},
-            {'subject': 'ICC 0104 - Data Structures and Algorithms', 'units': 3, 'grade': 2.25, 'semester': 'Second Year, First Semester', 'category': 'Major'}
-        ]
+        """Deprecated: samples removed to avoid non-real outputs."""
+        return []
     
     def parse_units(self, units_str: str) -> int:
         """Parse units from string"""
@@ -319,24 +311,110 @@ class AcademicAnalyzer:
         except:
             return 2.5  # Default
     
+    def is_valid_plm_course_code(self, course_code: str) -> bool:
+        """Validate PLM course code format"""
+        if not course_code or len(course_code) < 3:
+            return False
+        
+        # Skip invalid patterns
+        invalid_patterns = [
+            'COURSE', 'CODE', 'TITLE', 'UNITS', 'GRADE', 'FINAL', 'COMPLETION',
+            'DESCRIPTIVE', 'OF CREDIT', 'GRADES', 'FINAL', 'COMPLETION'
+        ]
+        
+        course_code_upper = course_code.upper()
+        for pattern in invalid_patterns:
+            if pattern in course_code_upper:
+                return False
+        
+        # Check for valid PLM course code patterns
+        # ICC 0101, CET 0114.1, EIT 0211.1A, etc.
+        plm_pattern = r'^[A-Z]{2,4}\s+\d{4}(?:\.\d+[A-Z]?)?$'
+        return bool(re.match(plm_pattern, course_code.strip()))
+    
+    def is_valid_grade_data(self, units: int, grade: float) -> bool:
+        """Validate units and grade data"""
+        return (1 <= units <= 10 and 1.0 <= grade <= 5.0 and units > 0 and grade > 0)
+    
+    def categorize_plm_course(self, course_code: str) -> str:
+        """Categorize PLM course based on course code"""
+        if not course_code:
+            return 'General'
+        
+        course_code = course_code.upper().strip()
+        
+        # IT/CS Major courses
+        if course_code.startswith('ICC') or course_code.startswith('EIT'):
+            return 'Major'
+        # Mathematics courses
+        elif course_code.startswith('CET') or course_code.startswith('MMW'):
+            return 'Mathematics'
+        # General Education courses
+        elif course_code.startswith('STS') or course_code.startswith('AAP') or course_code.startswith('PCM'):
+            return 'General Education'
+        # Physical Education
+        elif course_code.startswith('PED'):
+            return 'Physical Education'
+        # NSTP
+        elif course_code.startswith('NSTP'):
+            return 'NSTP'
+        # Capstone/Project courses
+        elif course_code.startswith('CAP'):
+            return 'Capstone'
+        else:
+            return 'General'
+    
     def clean_course_title(self, title: str) -> str:
         """Clean and fix common OCR errors in course titles"""
         title = title.strip()
         
-        # Fix common OCR typos
+        # Fix common OCR typos specific to PLM format
         title_fixes = {
             'rt Appreciation': 'Art Appreciation',
             'undamentals of Programming': 'Fundamentals of Programming',
             'oundation of Physical Activities': 'Foundation of Physical Activities',
             'Interdisiplinaryong Pagbasa at Pagsulat': 'Interdisciplinary Pagbasa at Pagsulat',
-            'echnology and Society': 'Technology and Society'
+            'echnology and Society': 'Technology and Society',
+            'ntroduction to Computing': 'Introduction to Computing',
+            'eneral Chemistry': 'General Chemistry',
+            'latform Technology': 'Platform Technology',
+            'uantitative Methods': 'Quantitative Methods',
+            'etworking 1': 'Networking 1',
+            'apstone Project': 'Capstone Project',
+            'uman Computer Interaction': 'Human Computer Interaction',
+            'ata Structures': 'Data Structures',
+            'lgorithms': 'Algorithms',
+            'oftware Engineering': 'Software Engineering',
+            'atabase Management': 'Database Management',
+            'achine Learning': 'Machine Learning',
+            'rtificial Intelligence': 'Artificial Intelligence',
+            'eb Development': 'Web Development',
+            'obile Application Development': 'Mobile Application Development',
+            # Fix double letters from OCR
+            'IIntroduction': 'Introduction',
+            'GGeneral': 'General',
+            'AArt': 'Art',
+            'FFundamentals': 'Fundamentals',
+            'GGeneral': 'General',
+            'HHuman': 'Human',
+            'PPlatform': 'Platform',
+            'DData': 'Data',
+            'QQuantitative': 'Quantitative',
+            'DDatabase': 'Database',
+            'SSoftware': 'Software',
+            'MMachine': 'Machine',
+            'AArtificial': 'Artificial',
+            'WWeb': 'Web',
+            'MMobile': 'Mobile',
+            'CCloud': 'Cloud',
+            'CCybersecurity': 'Cybersecurity'
         }
         
         for typo, correct in title_fixes.items():
             if typo in title:
                 title = title.replace(typo, correct)
         
-        # Remove any remaining OCR artifacts
+        # Remove any remaining OCR artifacts and normalize spacing
         title = re.sub(r'\s+', ' ', title)  # Multiple spaces to single space
         title = title.strip()
         

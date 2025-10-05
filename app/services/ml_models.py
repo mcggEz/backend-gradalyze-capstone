@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Iterable
 import os
 import json
 import numpy as np
-from .course_riasec_mapping import CourseRIASECMapper
+## CourseRIASECMapper removed from simplified stack
 
-_REGRESSION_WEIGHTS_ENV = "CAREER_REG_WEIGHTS"
-_KMEANS_CENTROIDS_ENV = "KMEANS_CENTROIDS"
-_KMEANS_LABELS_ENV = "KMEANS_LABELS"
+_REGRESSION_WEIGHTS_ENV = None
+_KMEANS_CENTROIDS_ENV = None
+_KMEANS_LABELS_ENV = None
 
 
 def _softmax(x: np.ndarray) -> np.ndarray:
@@ -17,23 +17,80 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     return e / (np.sum(e) or 1.0)
 
 
-def predict_career_scores(vec: np.ndarray) -> Dict[str, float]:
-    """Legacy linear regression career prediction - kept for backward compatibility"""
-    weights = os.getenv(_REGRESSION_WEIGHTS_ENV)
-    W = None
-    if weights:
+# Inlined from features.py to simplify the stack
+_FAMILY_KEYWORDS: Dict[str, Iterable[str]] = {
+    "math": ("math", "calculus", "algebra", "statistics", "probability"),
+    "programming": ("program", "coding", "cs", "oop", "data structure"),
+    "systems": ("system", "network", "os", "hardware", "architecture"),
+    "ux": ("ux", "ui", "design", "human-computer", "multimedia"),
+    "communication": ("communication", "english", "writing", "speech"),
+    "management": ("management", "project", "entrepreneur", "leadership"),
+    "data": ("data", "ml", "ai", "analytics", "database"),
+}
+
+def _family_for_subject(subject: str) -> str:
+    import re as _re
+    s = subject.lower()
+    for fam, keys in _FAMILY_KEYWORDS.items():
+        for k in keys:
+            if k in s:
+                return fam
+    return "programming" if _re.search(r"cs|comp(uter)?", s) else "data"
+
+def summarize_subject_families(grades: List[dict]) -> Dict[str, float]:
+    totals: Dict[str, float] = {k: 0.0 for k in _FAMILY_KEYWORDS}
+    weights: Dict[str, float] = {k: 0.0 for k in _FAMILY_KEYWORDS}
+    for row in grades or []:
         try:
-            W = np.array(json.loads(weights), dtype=float)
+            subject = str(row.get("subject") or "")
+            units = float(row.get("units") or 0.0)
+            grade = float(row.get("grade") or 0.0)
         except Exception:
-            W = None
-    if W is None:
-        W = np.array([
-            [0.7, 0.3, 0.2, 0.0, 0.1, 0.1, 0.8],
-            [0.2, 0.3, 0.8, 0.0, 0.1, 0.1, 0.2],
-            [0.3, 0.8, 0.4, 0.1, 0.2, 0.2, 0.3],
-            [0.0, 0.4, 0.1, 0.9, 0.3, 0.1, 0.1],
-            [0.1, 0.2, 0.2, 0.2, 0.6, 0.9, 0.1],
-        ], dtype=float)
+            continue
+        fam = _family_for_subject(subject)
+        totals[fam] += grade * max(units, 0.0)
+        weights[fam] += max(units, 0.0)
+
+    out: Dict[str, float] = {}
+    for fam in totals:
+        w = weights[fam]
+        out[fam] = (totals[fam] / w) if w > 0 else 0.0
+    return out
+
+def build_feature_vector_from_grades(grades: List[dict]) -> np.ndarray:
+    families = summarize_subject_families(grades)
+    order = ["math", "programming", "systems", "ux", "communication", "management", "data"]
+    raw = np.array([families.get(k, 0.0) for k in order], dtype=float)
+    scaled = 1.0 - np.clip(raw / 5.0, 0.0, 1.0)
+    norm = np.linalg.norm(scaled) or 1.0
+    return (scaled / norm).astype(float)
+
+def build_feature_vector_from_grades_it(grades: List[dict]) -> np.ndarray:
+    fam = summarize_subject_families(grades)
+    order = ["programming", "systems", "data", "ux", "math", "management", "communication"]
+    raw = np.array([fam.get(k, 0.0) for k in order], dtype=float)
+    scaled = 1.0 - np.clip(raw / 5.0, 0.0, 1.0)
+    norm = np.linalg.norm(scaled) or 1.0
+    return (scaled / norm).astype(float)
+
+def build_feature_vector_from_grades_cs(grades: List[dict]) -> np.ndarray:
+    fam = summarize_subject_families(grades)
+    order = ["math", "programming", "data", "systems", "ux", "communication", "management"]
+    raw = np.array([fam.get(k, 0.0) for k in order], dtype=float)
+    scaled = 1.0 - np.clip(raw / 5.0, 0.0, 1.0)
+    norm = np.linalg.norm(scaled) or 1.0
+    return (scaled / norm).astype(float)
+
+
+def predict_career_scores(vec: np.ndarray) -> Dict[str, float]:
+    """Deterministic linear scoring for careers used by /analysis/process."""
+    W = np.array([
+        [0.7, 0.3, 0.2, 0.0, 0.1, 0.1, 0.8],
+        [0.2, 0.3, 0.8, 0.0, 0.1, 0.1, 0.2],
+        [0.3, 0.8, 0.4, 0.1, 0.2, 0.2, 0.3],
+        [0.0, 0.4, 0.1, 0.9, 0.3, 0.1, 0.1],
+        [0.1, 0.2, 0.2, 0.2, 0.6, 0.9, 0.1],
+    ], dtype=float)
     scores = W @ vec.reshape(-1, 1)
     scores = scores.flatten()
     scores = (scores - scores.min()) / ((scores.max() - scores.min()) or 1.0)
@@ -41,63 +98,65 @@ def predict_career_scores(vec: np.ndarray) -> Dict[str, float]:
     return {c: float(v) for c, v in zip(careers, scores)}
 
 
-def predict_career_scores_random_forest(grades_data: List[Dict[str, Any]], 
-                                     archetype_scores: Dict[str, float]) -> Dict[str, float]:
-    """
-    Predict career scores using Random Forest (Objective 1)
-    
-    This is the new, improved method that uses Random Forest algorithm
-    instead of simple linear regression.
-    
-    Args:
-        grades_data: List of course grades with course_code and grade fields
-        archetype_scores: RIASEC archetype percentages
-        
-    Returns:
-        Dictionary of career scores
-    """
-    from .random_forest_career import predict_career_scores_random_forest as rf_predict
-    return rf_predict(grades_data, archetype_scores)
+# Removed random forest path to reduce complexity
+
+
+def predict_career_scores_it(vec: np.ndarray) -> Dict[str, float]:
+    """Program-specific career scoring for IT using linear head on features."""
+    # Emphasize systems, cloud, devops oriented roles
+    careers = ["systems_engineering", "cloud_engineering", "software_engineering", "devops", "product_management", "data_science", "ui_ux"]
+    W = np.array([
+        [0.2, 0.8, 0.6, 0.4, 0.2, 0.3, 0.2],  # systems
+        [0.2, 0.7, 0.5, 0.6, 0.2, 0.3, 0.2],  # cloud
+        [0.5, 0.4, 0.7, 0.3, 0.2, 0.3, 0.2],  # software
+        [0.2, 0.6, 0.6, 0.7, 0.2, 0.2, 0.2],  # devops
+        [0.1, 0.2, 0.5, 0.2, 0.6, 0.4, 0.2],  # pm
+        [0.2, 0.3, 0.4, 0.2, 0.2, 0.7, 0.3],  # data
+        [0.2, 0.2, 0.3, 0.8, 0.2, 0.2, 0.5],  # ui/ux
+    ], dtype=float)
+    s = W @ vec.reshape(-1, 1)
+    s = s.flatten()
+    s = (s - s.min()) / ((s.max() - s.min()) or 1.0)
+    return {c: float(v) for c, v in zip(careers, s)}
+
+
+def predict_career_scores_cs(vec: np.ndarray) -> Dict[str, float]:
+    """Program-specific career scoring for CS prioritizing math/algorithms heavy roles."""
+    careers = ["data_science", "software_engineering", "systems_engineering", "product_management", "ui_ux", "cloud_engineering", "devops"]
+    W = np.array([
+        [0.8, 0.5, 0.3, 0.2, 0.2, 0.3, 0.2],  # data science
+        [0.5, 0.8, 0.4, 0.2, 0.2, 0.3, 0.2],  # software
+        [0.4, 0.6, 0.7, 0.2, 0.2, 0.3, 0.2],  # systems
+        [0.2, 0.5, 0.3, 0.7, 0.3, 0.2, 0.2],  # pm
+        [0.2, 0.4, 0.3, 0.3, 0.7, 0.2, 0.2],  # ui/ux
+        [0.3, 0.5, 0.5, 0.2, 0.2, 0.7, 0.4],  # cloud
+        [0.2, 0.5, 0.6, 0.2, 0.2, 0.6, 0.7],  # devops
+    ], dtype=float)
+    s = W @ vec.reshape(-1, 1)
+    s = s.flatten()
+    s = (s - s.min()) / ((s.max() - s.min()) or 1.0)
+    return {c: float(v) for c, v in zip(careers, s)}
 
 
 def predict_archetype_kmeans(vec: np.ndarray) -> Tuple[int, Dict[str, float]]:
-    """Legacy K-means archetype prediction - kept for backward compatibility"""
-    centroids_raw = os.getenv(_KMEANS_CENTROIDS_ENV)
-    labels_raw = os.getenv(_KMEANS_LABELS_ENV)
-    C = None
-    labels = None
-    if centroids_raw and labels_raw:
-        try:
-            C = np.array(json.loads(centroids_raw), dtype=float)
-            labels = list(json.loads(labels_raw))
-        except Exception:
-            C, labels = None, None
-    if C is None:
-        rng = np.random.default_rng(42)
-        C = rng.random((6, 7))
-        C = C / (np.linalg.norm(C, axis=1, keepdims=True) + 1e-9)
-        labels = ["realistic", "investigative", "artistic", "social", "enterprising", "conventional"]
+    """Deterministic mock K-means using fixed centroids and labels."""
+    labels = ["realistic", "investigative", "artistic", "social", "enterprising", "conventional"]
+    C = np.array([
+        [0.9,0.1,0.0,0.1,0.1,0.1,0.8],  # realistic
+        [0.1,0.9,0.1,0.1,0.1,0.1,0.2],  # investigative
+        [0.1,0.1,0.9,0.8,0.1,0.1,0.3],  # artistic
+        [0.1,0.1,0.2,0.1,0.1,0.1,0.1],  # social
+        [0.1,0.1,0.1,0.1,0.9,0.2,0.2],  # enterprising
+        [0.1,0.1,0.1,0.1,0.2,0.9,0.1],  # conventional
+    ], dtype=float)
+    C = C / (np.linalg.norm(C, axis=1, keepdims=True) + 1e-9)
     dists = np.linalg.norm(C - vec.reshape(1, -1), axis=1)
     probs = _softmax(-dists)
     cluster_id = int(np.argmin(dists))
     return cluster_id, {lab: float(p * 100.0) for lab, p in zip(labels, probs)}
 
 
-def predict_archetype_course_based(grades_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Predict student archetype using course-based RIASEC mapping (Objective 2)
-    
-    This is the new, improved method that uses actual course curriculum mapping
-    instead of generic K-means clustering.
-    
-    Args:
-        grades_data: List of course grades with course_code and grade fields
-        
-    Returns:
-        Complete archetype analysis with scores, primary archetype, and insights
-    """
-    mapper = CourseRIASECMapper()
-    return mapper.get_archetype_analysis(grades_data)
+# Removed course-based mapping path to reduce complexity
 
 
 def predict_archetype_kmeans_riasec(grades_data: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -117,49 +176,6 @@ def predict_archetype_kmeans_riasec(grades_data: List[Dict[str, Any]]) -> Dict[s
     return kmeans_predict(grades_data)
 
 
-def predict_archetype_hybrid(vec: np.ndarray, grades_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Hybrid archetype prediction combining course-based mapping with feature vector
-    
-    Args:
-        vec: Feature vector from academic analysis
-        grades_data: List of course grades
-        
-    Returns:
-        Combined archetype analysis
-    """
-    # Get course-based analysis
-    course_analysis = predict_archetype_course_based(grades_data)
-    
-    # Get K-means analysis
-    cluster_id, kmeans_scores = predict_archetype_kmeans(vec)
-    
-    # Combine the results (weighted average: 70% course-based, 30% K-means)
-    combined_scores = {}
-    for archetype in course_analysis['archetype_scores']:
-        course_score = course_analysis['archetype_scores'][archetype]
-        kmeans_score = kmeans_scores.get(archetype, 0.0)
-        combined_scores[archetype] = (course_score * 0.7) + (kmeans_score * 0.3)
-    
-    # Normalize combined scores
-    total = sum(combined_scores.values())
-    if total > 0:
-        combined_scores = {k: (v / total) * 100 for k, v in combined_scores.items()}
-    
-    # Get primary archetype from combined scores
-    primary_archetype = max(combined_scores.items(), key=lambda x: x[1])[0]
-    
-    return {
-        'primary_archetype': primary_archetype,
-        'archetype_name': course_analysis['archetype_name'],
-        'archetype_description': course_analysis['archetype_description'],
-        'archetype_traits': course_analysis['archetype_traits'],
-        'archetype_scores': combined_scores,
-        'course_based_scores': course_analysis['archetype_scores'],
-        'kmeans_scores': kmeans_scores,
-        'insights': course_analysis['insights'],
-        'total_courses_analyzed': course_analysis['total_courses_analyzed'],
-        'analysis_method': 'hybrid_course_kmeans'
-    }
+# Removed hybrid method to avoid dual pathways
 
 
